@@ -1,0 +1,26 @@
+[package]
+name = "get_iplayer_rs"
+version = "1.0.0"
+edition = "2021"
+authors = ["get_iplayer_rs Contributors"]
+description = "Lists and records BBC iPlayer TV and BBC Sounds radio programmes (Rust rewrite)"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "time", "io-util", "fs", "signal"] }
+reqwest = { version = "0.13", features = ["json", "cookies", "stream"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+quick-xml = "0.42"
+regex = "1.13"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.6", features = ["derive"] }
+indicatif = "0.18"
+url = "2.5"
+htmlescape = "0.3"
+futures-util = "0.3"
+tempfile = "3.17"
+
+[[bin]]
+name = "get_iplayer_rs"
+path = "src/main.rs"
