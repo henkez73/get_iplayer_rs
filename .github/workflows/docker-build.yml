@@ -40,7 +40,6 @@ jobs:
         with:
           images: henkez/get_iplayer_rs
           tags: |
-            type=raw,value=pr-${{ github.event.pull_request.number }}
             type=sha,prefix=sha-
 
       - name: Build and push Docker image
