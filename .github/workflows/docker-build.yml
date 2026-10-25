@@ -18,10 +18,16 @@ jobs:
         run: |
           # Skip build if this is a PR and only markdown files have changed
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            CHANGED_FILES_COUNT=$(git diff --name-only HEAD~1 HEAD | grep -v "\.md$" | wc -l)
-            if [ "$CHANGED_FILES_COUNT" -eq 0 ]; then
-              echo "Only documentation files changed, skipping build"
-              exit 0
+            # Check if we have a parent commit to compare against
+            if git rev-parse HEAD~1 > /dev/null 2>&1; then
+              CHANGED_FILES_COUNT=$(git diff --name-only HEAD~1 HEAD | grep -v "\.md$" | wc -l)
+              if [ "$CHANGED_FILES_COUNT" -eq 0 ]; then
+                echo "Only documentation files changed, skipping build"
+                exit 0
+              fi
+            else
+              # If there's no parent commit (e.g., first commit in a new branch), continue with build
+              echo "No parent commit found, proceeding with build"
             fi
           fi
 
