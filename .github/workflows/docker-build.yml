@@ -7,6 +7,13 @@ on:
       - '.github/workflows/release.yml'
   push:
     branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      debug_enabled:
+        description: 'Enable debug output'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   build:
