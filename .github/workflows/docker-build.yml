@@ -16,7 +16,7 @@ on:
         type: boolean
 
 jobs:
-  build:
+  build-amd64:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -55,20 +55,69 @@ jobs:
         with:
           images: henkez/get_iplayer_rs
           tags: |
-            type=sha,prefix=sha-
-            type=raw,value=latest
+            type=sha,prefix=sha-amd64-
 
-      - name: Build and push Docker image
+      - name: Build and push AMD64 Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  build-arm64:
+    runs-on: ubuntu-arm64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for documentation-only changes
+        id: check_docs
+        run: |
+          # Skip build if this is a PR and only markdown files have changed
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # Check if we have a parent commit to compare against
+            if git rev-parse HEAD~1 > /dev/null 2>&1; then
+              CHANGED_FILES_COUNT=$(git diff --name-only HEAD~1 HEAD | grep -v "\.md$" | wc -l)
+              if [ "$CHANGED_FILES_COUNT" -eq 0 ]; then
+                echo "Only documentation files changed, skipping build"
+                exit 0
+              fi
+            else
+              # If there's no parent commit (e.g., first commit in a new branch), continue with build
+              echo "No parent commit found, proceeding with build"
+            fi
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: henkez/get_iplayer_rs
+          tags: |
+            type=sha,prefix=sha-arm64-
+
+      - name: Build and push ARM64 Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
   release:
-    needs: build
+    needs: [build-amd64, build-arm64]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
@@ -98,11 +147,35 @@ jobs:
             echo "VERSION=${VERSION#v}" >> $GITHUB_ENV
           fi
 
-      - name: Tag with version and latest
+      - name: Create manifest and push to DockerHub
         run: |
-          # For non-PR events, directly tag the latest built image from build job
-          echo "Tagging and pushing version ${{ env.VERSION }} and latest"
-          docker tag henkez/get_iplayer_rs:sha-${{ github.sha }} henkez/get_iplayer_rs:${{ env.VERSION }}
-          docker tag henkez/get_iplayer_rs:sha-${{ github.sha }} henkez/get_iplayer_rs:latest
-          docker push henkez/get_iplayer_rs:${{ env.VERSION }}
-          docker push henkez/get_iplayer_rs:latest
+          docker pull henkez/get_iplayer_rs:sha-amd64-${{ github.sha }}
+          docker pull henkez/get_iplayer_rs:sha-arm64-${{ github.sha }}
+          
+          # Create a multi-arch manifest
+          docker manifest create henkez/get_iplayer_rs:${{ env.VERSION }} \
+            henkez/get_iplayer_rs:sha-amd64-${{ github.sha }} \
+            henkez/get_iplayer_rs:sha-arm64-${{ github.sha }}
+          
+          # Annotate the manifest for each platform
+          docker manifest annotate henkez/get_iplayer_rs:${{ env.VERSION }} \
+            henkez/get_iplayer_rs:sha-amd64-${{ github.sha }} --os linux --arch amd64
+          
+          docker manifest annotate henkez/get_iplayer_rs:${{ env.VERSION }} \
+            henkez/get_iplayer_rs:sha-arm64-${{ github.sha }} --os linux --arch arm64
+          
+          # Push the manifest
+          docker manifest push henkez/get_iplayer_rs:${{ env.VERSION }}
+          
+          # Also tag and push latest
+          docker manifest create henkez/get_iplayer_rs:latest \
+            henkez/get_iplayer_rs:sha-amd64-${{ github.sha }} \
+            henkez/get_iplayer_rs:sha-arm64-${{ github.sha }}
+          
+          docker manifest annotate henkez/get_iplayer_rs:latest \
+            henkez/get_iplayer_rs:sha-amd64-${{ github.sha }} --os linux --arch amd64
+          
+          docker manifest annotate henkez/get_iplayer_rs:latest \
+            henkez/get_iplayer_rs:sha-arm64-${{ github.sha }} --os linux --arch arm64
+          
+          docker manifest push henkez/get_iplayer_rs:latest
