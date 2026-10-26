@@ -3,6 +3,8 @@ name: Build and Push Docker Image
 on:
   pull_request:
     branches: [ main ]
+    paths-ignore:
+      - '.github/workflows/release.yml'
   push:
     branches: [ main ]
 
