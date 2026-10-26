@@ -56,6 +56,7 @@ jobs:
           images: henkez/get_iplayer_rs
           tags: |
             type=sha,prefix=sha-
+            type=raw,value=latest
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -99,8 +100,9 @@ jobs:
 
       - name: Tag with version and latest
         run: |
-          docker pull henkez/get_iplayer_rs:pr-${{ github.event.number }}
-          docker tag henkez/get_iplayer_rs:pr-${{ github.event.number }} henkez/get_iplayer_rs:${{ env.VERSION }}
-          docker tag henkez/get_iplayer_rs:pr-${{ github.event.number }} henkez/get_iplayer_rs:latest
+          # For non-PR events, directly tag the latest built image from build job
+          echo "Tagging and pushing version ${{ env.VERSION }} and latest"
+          docker tag henkez/get_iplayer_rs:sha-${{ github.sha }} henkez/get_iplayer_rs:${{ env.VERSION }}
+          docker tag henkez/get_iplayer_rs:sha-${{ github.sha }} henkez/get_iplayer_rs:latest
           docker push henkez/get_iplayer_rs:${{ env.VERSION }}
           docker push henkez/get_iplayer_rs:latest
