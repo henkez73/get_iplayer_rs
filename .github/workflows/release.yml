@@ -1,0 +1,68 @@
+name: Release Automation
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '.github/workflows/**'
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build binaries
+        run: |
+          # Build for x86_64 linux only (faster build)
+          set -e
+          cargo build --release --target x86_64-unknown-linux-gnu
+
+      - name: Create release assets
+        run: |
+          mkdir -p release-assets
+          cp target/x86_64-unknown-linux-gnu/release/get_iplayer_rs release-assets/get_iplayer_rs-x86_64-linux
+          
+          # Create checksums
+          cd release-assets
+          sha256sum get_iplayer_rs-x86_64-linux > SHA256SUMS-x86_64
+
+      - name: Extract version from Cargo.toml
+        id: version
+        run: |
+          VERSION=$(grep "^version" Cargo.toml | cut -d'"' -f2)
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          name: Release ${{ env.VERSION }}
+          draft: false
+          prerelease: false
+          files: |
+            release-assets/get_iplayer_rs-x86_64-linux
+            release-assets/SHA256SUMS-x86_64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

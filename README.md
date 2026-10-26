@@ -38,6 +38,13 @@ cargo build --release
 # target/release/get_iplayer_rs
 ```
 
+## Automated Releases
+
+Releases are automatically created when code is pushed to the main branch. These releases include:
+- Semantic versioned binaries for Linux x86_64 and ARM64 architectures
+- SHA256 checksums for verification
+- GitHub release assets with proper version tags
+
 ## Docker Usage
 
 ### Build the image
