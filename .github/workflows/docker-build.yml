@@ -150,7 +150,7 @@ jobs:
       - name: Create manifest and push to DockerHub
         run: |
           # Get the short SHA for consistent tag reference
-          SHORT_SHA=${{ github.sha | split('') | first(7) }}
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
           
           docker pull henkez/get_iplayer_rs:sha-amd64-$SHORT_SHA
           docker pull henkez/get_iplayer_rs:sha-arm64-$SHORT_SHA
