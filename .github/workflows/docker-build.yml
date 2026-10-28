@@ -141,10 +141,10 @@ jobs:
           COMMIT_MSG="${{ github.event.head_commit.message }}"
           VERSION=$(echo "$COMMIT_MSG" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
           if [ -z "$VERSION" ]; then
-            echo "VERSION=0.1.0" >> $GITHUB_ENV
+            echo "version=0.1.0" >> "$GITHUB_OUTPUT"
           else
             # Remove 'v' prefix
-            echo "VERSION=${VERSION#v}" >> $GITHUB_ENV
+            echo "version=${VERSION#v}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create manifest and push to DockerHub
@@ -152,23 +152,20 @@ jobs:
           # Get the short SHA for consistent tag reference
           SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
           
-          docker pull henkez/get_iplayer_rs:sha-amd64-$SHORT_SHA
-          docker pull henkez/get_iplayer_rs:sha-arm64-$SHORT_SHA
-          
           # Create a multi-arch manifest
-          docker manifest create henkez/get_iplayer_rs:${{ env.VERSION }} \
+          docker manifest create henkez/get_iplayer_rs:${{ steps.version.outputs.version }} \
             henkez/get_iplayer_rs:sha-amd64-$SHORT_SHA \
             henkez/get_iplayer_rs:sha-arm64-$SHORT_SHA
           
           # Annotate the manifest for each platform
-          docker manifest annotate henkez/get_iplayer_rs:${{ env.VERSION }} \
+          docker manifest annotate henkez/get_iplayer_rs:${{ steps.version.outputs.version }} \
             henkez/get_iplayer_rs:sha-amd64-$SHORT_SHA --os linux --arch amd64
           
-          docker manifest annotate henkez/get_iplayer_rs:${{ env.VERSION }} \
+          docker manifest annotate henkez/get_iplayer_rs:${{ steps.version.outputs.version }} \
             henkez/get_iplayer_rs:sha-arm64-$SHORT_SHA --os linux --arch arm64
           
           # Push the manifest
-          docker manifest push henkez/get_iplayer_rs:${{ env.VERSION }}
+          docker manifest push henkez/get_iplayer_rs:${{ steps.version.outputs.version }}
           
           # Also tag and push latest
           docker manifest create henkez/get_iplayer_rs:latest \
