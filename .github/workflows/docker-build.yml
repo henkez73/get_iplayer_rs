@@ -15,8 +15,52 @@ on:
         default: false
         type: boolean
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
+  check-pr-images:
+    runs-on: ubuntu-latest
+    outputs:
+      available: ${{ steps.lookup.outputs.available }}
+      pr_number: ${{ steps.lookup.outputs.pr_number }}
+    steps:
+      - name: Set up Docker Buildx
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Find reusable images from merged pull request
+        id: lookup
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_NUMBER=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" --jq '.[0].number // empty')
+          if [ -z "$PR_NUMBER" ]; then
+            echo "No merged pull request found for this commit"
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          if docker buildx imagetools inspect "henkez/get_iplayer_rs:pr-${PR_NUMBER}-amd64" > /dev/null 2>&1 && \
+             docker buildx imagetools inspect "henkez/get_iplayer_rs:pr-${PR_NUMBER}-arm64" > /dev/null 2>&1; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build-amd64:
+    needs: check-pr-images
+    if: needs.check-pr-images.outputs.available != 'true'
     runs-on: ubuntu-26.04
     steps:
       - name: Checkout code
@@ -56,6 +100,7 @@ jobs:
           images: henkez/get_iplayer_rs
           tags: |
             type=sha,prefix=sha-amd64-
+            type=raw,value=pr-${{ github.event.number }}-${{ github.sha }}-amd64,enable=${{ github.event_name == 'pull_request' }}
 
       - name: Build and push AMD64 Docker image
         uses: docker/build-push-action@v5
@@ -67,6 +112,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
   build-arm64:
+    needs: check-pr-images
+    if: needs.check-pr-images.outputs.available != 'true'
     runs-on: ubuntu-26.04-arm
     steps:
       - name: Checkout code
@@ -106,6 +153,7 @@ jobs:
           images: henkez/get_iplayer_rs
           tags: |
             type=sha,prefix=sha-arm64-
+            type=raw,value=pr-${{ github.event.number }}-${{ github.sha }}-arm64,enable=${{ github.event_name == 'pull_request' }}
 
       - name: Build and push ARM64 Docker image
         uses: docker/build-push-action@v5
@@ -116,9 +164,58 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  release:
+  publish-pr-images:
     needs: [build-amd64, build-arm64]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Confirm pull request revision is current
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.number }}
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_MERGE_SHA: ${{ github.sha }}
+        run: |
+          PR_DATA=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '[.head.sha, .merge_commit_sha] | @tsv')
+          CURRENT_HEAD_SHA=$(printf '%s\n' "$PR_DATA" | cut -f1)
+          CURRENT_MERGE_SHA=$(printf '%s\n' "$PR_DATA" | cut -f2)
+          if [ "$CURRENT_HEAD_SHA" = "$EXPECTED_HEAD_SHA" ] && [ "$CURRENT_MERGE_SHA" = "$EXPECTED_MERGE_SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping promotion because this pull request revision is no longer current"
+          fi
+
+      - name: Publish reusable pull request image tags
+        if: steps.current.outputs.current == 'true'
+        run: |
+          docker buildx imagetools create \
+            --tag henkez/get_iplayer_rs:pr-${{ github.event.number }}-amd64 \
+            henkez/get_iplayer_rs:pr-${{ github.event.number }}-${{ github.sha }}-amd64
+
+          docker buildx imagetools create \
+            --tag henkez/get_iplayer_rs:pr-${{ github.event.number }}-arm64 \
+            henkez/get_iplayer_rs:pr-${{ github.event.number }}-${{ github.sha }}-arm64
+
+  release:
+    needs: [check-pr-images, build-amd64, build-arm64]
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.check-pr-images.result == 'success' &&
+      (needs.check-pr-images.outputs.available == 'true' ||
+      (needs.build-amd64.result == 'success' && needs.build-arm64.result == 'success'))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -140,18 +237,25 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Create manifest and push to DockerHub
+        env:
+          REUSE_PR_IMAGES: ${{ needs.check-pr-images.outputs.available }}
+          PR_NUMBER: ${{ needs.check-pr-images.outputs.pr_number }}
         run: |
-          # Get the short SHA for consistent tag reference
-          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
-          
-          # Combine the platform-specific image indexes under the release tags
+          if [ "$REUSE_PR_IMAGES" = "true" ]; then
+            AMD64_IMAGE="henkez/get_iplayer_rs:pr-${PR_NUMBER}-amd64"
+            ARM64_IMAGE="henkez/get_iplayer_rs:pr-${PR_NUMBER}-arm64"
+          else
+            SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+            AMD64_IMAGE="henkez/get_iplayer_rs:sha-amd64-${SHORT_SHA}"
+            ARM64_IMAGE="henkez/get_iplayer_rs:sha-arm64-${SHORT_SHA}"
+          fi
+
           docker buildx imagetools create \
             --tag henkez/get_iplayer_rs:${{ steps.version.outputs.version }} \
-            henkez/get_iplayer_rs:sha-amd64-$SHORT_SHA \
-            henkez/get_iplayer_rs:sha-arm64-$SHORT_SHA
-          
-          # Also publish the same multi-arch index as latest
+            "$AMD64_IMAGE" \
+            "$ARM64_IMAGE"
+
           docker buildx imagetools create \
             --tag henkez/get_iplayer_rs:latest \
-            henkez/get_iplayer_rs:sha-amd64-$SHORT_SHA \
-            henkez/get_iplayer_rs:sha-arm64-$SHORT_SHA
+            "$AMD64_IMAGE" \
+            "$ARM64_IMAGE"
