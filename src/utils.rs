@@ -28,7 +28,10 @@ pub fn words_to_number(text: &str) -> Option<u32> {
     }
 
     // Try compound like "twenty-one" or "twenty one"
-    let parts: Vec<&str> = text.split(|c: char| c == '-' || c == ' ' || c == '_').filter(|s| !s.is_empty()).collect();
+    let parts: Vec<&str> = text
+        .split(['-', ' ', '_'])
+        .filter(|s| !s.is_empty())
+        .collect();
     if parts.len() == 2 {
         if let (Some(&t), Some(&u)) = (tens.get(parts[0]), units.get(parts[1])) {
             return Some(t + u);

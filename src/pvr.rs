@@ -41,7 +41,7 @@ impl PvrManager {
                     let mut options = HashMap::new();
                     if let Ok(f) = File::open(&path) {
                         let reader = BufReader::new(f);
-                        for line in reader.lines().flatten() {
+                        for line in reader.lines().map_while(Result::ok) {
                             let line = line.trim();
                             if line.is_empty() || line.starts_with('#') {
                                 continue;

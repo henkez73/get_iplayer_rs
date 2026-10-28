@@ -168,10 +168,8 @@ impl Searcher {
             }
 
             // Hide already recorded
-            if filter.hide_recorded && !filter.force {
-                if history.check(&p.pid) {
-                    return false;
-                }
+            if filter.hide_recorded && !filter.force && history.check(&p.pid) {
+                return false;
             }
 
             true
@@ -184,7 +182,7 @@ impl Searcher {
                 "episode" => matched.sort_by(|a, b| a.episode.cmp(&b.episode)),
                 "channel" => matched.sort_by(|a, b| a.channel.cmp(&b.channel)),
                 "available" => matched.sort_by(|a, b| a.available.cmp(&b.available)),
-                "duration" => matched.sort_by(|a, b| a.duration.cmp(&b.duration)),
+                "duration" => matched.sort_by_key(|a| a.duration),
                 _ => matched.sort_by_key(|p| p.index),
             }
         } else {

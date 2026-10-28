@@ -278,6 +278,7 @@ impl BbcApi {
     ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
         let mut pids = Vec::new();
         let mut seen = std::collections::HashSet::new();
+        let re = Regex::new(r#"data-pid="([b-df-hj-np-tv-z0-9]{8,})""#).unwrap();
 
         // Check https://www.bbc.co.uk/programmes/{pid}/episodes/player
         for page in 1..=10 {
@@ -288,7 +289,6 @@ impl BbcApi {
             }
             let html = resp.text().await?;
 
-            let re = Regex::new(r#"data-pid="([b-df-hj-np-tv-z0-9]{8,})""#).unwrap();
             let mut page_pids = 0;
             for cap in re.captures_iter(&html) {
                 if let Some(m) = cap.get(1) {

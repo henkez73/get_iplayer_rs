@@ -8,6 +8,15 @@ pub struct PostProcessor {
     pub log_level: String,
 }
 
+/// Options controlling output path generation.
+pub struct OutputPathOptions<'a> {
+    pub base_output_dir: &'a Path,
+    pub use_subdir: bool,
+    pub subdir_format: Option<&'a str>,
+    pub file_prefix: Option<&'a str>,
+    pub keep_whitespace: bool,
+}
+
 impl PostProcessor {
     pub fn new(ffmpeg_override: Option<&str>, log_level: Option<&str>) -> Self {
         let ffmpeg_path = ffmpeg_override
@@ -28,27 +37,23 @@ impl PostProcessor {
         prog: &Programme,
         version: &str,
         ext: &str,
-        base_output_dir: &Path,
-        use_subdir: bool,
-        subdir_format: Option<&str>,
-        file_prefix: Option<&str>,
-        keep_whitespace: bool,
+        options: &OutputPathOptions<'_>,
     ) -> (PathBuf, PathBuf) {
         let vars = prog.template_vars(version, ext);
 
         // Subdir
-        let mut target_dir = base_output_dir.to_path_buf();
-        if use_subdir {
-            let sub_fmt = subdir_format.unwrap_or("<name>");
+        let mut target_dir = options.base_output_dir.to_path_buf();
+        if options.use_subdir {
+            let sub_fmt = options.subdir_format.unwrap_or("<name>");
             let sub_name = substitute_template(sub_fmt, &vars);
-            let clean_sub = sanitize_filename(&sub_name, keep_whitespace);
+            let clean_sub = sanitize_filename(&sub_name, options.keep_whitespace);
             target_dir = target_dir.join(clean_sub);
         }
 
         // File prefix
-        let prefix_fmt = file_prefix.unwrap_or("<name> - <episode> <pid> <version>");
+        let prefix_fmt = options.file_prefix.unwrap_or("<name> - <episode> <pid> <version>");
         let prefix = substitute_template(prefix_fmt, &vars);
-        let clean_prefix = sanitize_filename(&prefix, keep_whitespace);
+        let clean_prefix = sanitize_filename(&prefix, options.keep_whitespace);
 
         let final_filename = format!("{}.{}", clean_prefix, ext);
         let final_path = target_dir.join(final_filename);

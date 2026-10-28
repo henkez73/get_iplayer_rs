@@ -42,7 +42,7 @@ impl Indexer {
                 if seen.insert(str_date.clone()) {
                     dates.push(str_date);
                 }
-                curr = curr + Duration::days(7);
+                curr += Duration::days(7);
             }
         } else {
             let start = now - Duration::days(days.min(30));
@@ -54,7 +54,7 @@ impl Indexer {
                 if seen.insert(str_date.clone()) {
                     dates.push(str_date);
                 }
-                curr = curr + Duration::days(7);
+                curr += Duration::days(7);
             }
         }
 
@@ -102,7 +102,7 @@ impl Indexer {
                 async move {
                     let res = client.get(&url).send().await;
                     let count = progress_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                    if count % 20 == 0 || count == total_urls {
+                    if count.is_multiple_of(20) || count == total_urls {
                         print!(".");
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
