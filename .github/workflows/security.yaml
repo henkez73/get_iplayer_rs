@@ -26,7 +26,7 @@ jobs:
       - name: TruffleHog OSS Secret Scan
         uses: trufflesecurity/trufflehog@0301dc36bd6762d2a20a8317ae00375eb5ba90a9
         with:
-          version: v3.99.7
+          version: 3.99.7
           extra_args: --results=verified # Reports confirmed secrets
 
   # 2. Check Rust dependencies for known security advisories
