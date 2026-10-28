@@ -27,7 +27,7 @@ use history::History;
 use indexer::Indexer;
 use mediaselector::Mediaselector;
 use models::{Programme, ProgrammeType, Quality, StreamConnection};
-use postproc::PostProcessor;
+use postproc::{OutputPathOptions, PostProcessor};
 use pvr::PvrManager;
 use search::{SearchFilter, Searcher};
 use std::path::PathBuf;
@@ -120,6 +120,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let postproc = PostProcessor::new(cli.ffmpeg.as_deref(), None);
     let tagger = Tagger::new(cli.atomicparsley.as_deref(), &postproc.ffmpeg_path);
     let pvr_mgr = PvrManager::new(config.pvr_dir());
+    let download_services = DownloadServices {
+        cli: &cli,
+        bbc_api: &bbc_api,
+        mediaselector: &mediaselector,
+        downloader: &downloader,
+        postproc: &postproc,
+        tagger: &tagger,
+    };
 
     // PVR Management Commands
     if cli.pvr_list {
@@ -282,16 +290,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 continue;
             }
 
-            download_programme(
-                &mut prog,
-                &cli,
-                &bbc_api,
-                &mediaselector,
-                &downloader,
-                &postproc,
-                &tagger,
-                &mut history,
-            ).await?;
+            download_programme(&mut prog, &download_services, &mut history).await?;
         }
 
         return Ok(());
@@ -329,16 +328,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
             for matched_prog in matches {
                 let mut prog = matched_prog.clone();
-                if let Err(e) = download_programme(
-                    &mut prog,
-                    &cli,
-                    &bbc_api,
-                    &mediaselector,
-                    &downloader,
-                    &postproc,
-                    &tagger,
-                    &mut history,
-                ).await {
+                if let Err(e) =
+                    download_programme(&mut prog, &download_services, &mut history).await
+                {
                     eprintln!("ERROR: Failed downloading {}: {}", prog.pid, e);
                 }
             }
@@ -428,16 +420,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             continue;
         }
 
-        if let Err(e) = download_programme(
-            &mut prog,
-            &cli,
-            &bbc_api,
-            &mediaselector,
-            &downloader,
-            &postproc,
-            &tagger,
-            &mut history,
-        ).await {
+        if let Err(e) = download_programme(&mut prog, &download_services, &mut history).await {
             eprintln!("ERROR: Failed to download {}: {}", prog.pid, e);
         }
     }
@@ -445,17 +428,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     Ok(())
 }
 
+struct DownloadServices<'a> {
+    cli: &'a Cli,
+    bbc_api: &'a BbcApi,
+    mediaselector: &'a Mediaselector,
+    downloader: &'a Downloader,
+    postproc: &'a PostProcessor,
+    tagger: &'a Tagger,
+}
+
 /// Download and process single programme
 async fn download_programme(
     prog: &mut Programme,
-    cli: &Cli,
-    bbc_api: &BbcApi,
-    mediaselector: &Mediaselector,
-    downloader: &Downloader,
-    postproc: &PostProcessor,
-    tagger: &Tagger,
+    services: &DownloadServices<'_>,
     history: &mut History,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let cli = services.cli;
+    let bbc_api = services.bbc_api;
+    let mediaselector = services.mediaselector;
+    let downloader = services.downloader;
+    let postproc = services.postproc;
+    let tagger = services.tagger;
     println!("INFO: Processing '{} - {}' ({})", prog.name, prog.episode, prog.pid);
 
     // 1. Resolve version PIDs
@@ -520,11 +513,13 @@ async fn download_programme(
         prog,
         &selected_version,
         ext,
-        &default_output_dir,
-        cli.subdir,
-        cli.subdir_format.as_deref(),
-        cli.file_prefix.as_deref(),
-        cli.whitespace,
+        &OutputPathOptions {
+            base_output_dir: &default_output_dir,
+            use_subdir: cli.subdir,
+            subdir_format: cli.subdir_format.as_deref(),
+            file_prefix: cli.file_prefix.as_deref(),
+            keep_whitespace: cli.whitespace,
+        },
     );
 
     if !cli.test && !target_dir.exists() {

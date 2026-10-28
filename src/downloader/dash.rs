@@ -135,10 +135,10 @@ impl DashDownloader {
                             if best_video.as_ref().map(|v| bandwidth > v.bandwidth).unwrap_or(true) {
                                 best_video = Some(track);
                             }
-                        } else if rep_mime.contains("audio") {
-                            if best_audio.as_ref().map(|a| bandwidth > a.bandwidth).unwrap_or(true) {
-                                best_audio = Some(track);
-                            }
+                        } else if rep_mime.contains("audio")
+                            && best_audio.as_ref().map(|a| bandwidth > a.bandwidth).unwrap_or(true)
+                        {
+                            best_audio = Some(track);
                         }
                     }
                 }

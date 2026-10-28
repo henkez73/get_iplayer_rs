@@ -32,7 +32,7 @@ impl History {
                 "guidance", "web", "episodenum", "seriesnum",
             ];
 
-            for line in reader.lines().flatten() {
+            for line in reader.lines().map_while(Result::ok) {
                 let line = line.trim();
                 if line.is_empty() || line.starts_with('#') {
                     continue;

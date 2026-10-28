@@ -1,0 +1,63 @@
+name: Security & Vulnerability Checks
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  schedule:
+    # Run daily at midnight to catch newly published RustSec advisories
+    - cron: '0 0 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  # 1. Scan repository for leaked secrets and API keys
+  secret-scan:
+    name: Secret Leak Detection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history needed for secret scan
+
+      - name: TruffleHog OSS Secret Scan
+        uses: trufflesecurity/trufflehog@0301dc36bd6762d2a20a8317ae00375eb5ba90a9
+        with:
+          version: 3.99.7
+          extra_args: --results=verified # Reports confirmed secrets
+
+  # 2. Check Rust dependencies for known security advisories
+  cargo-audit:
+    name: Dependency Vulnerability Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run cargo-audit
+        run: cargo audit
+
+  # 3. Rust lint checks
+  clippy-scan:
+    name: Rust Clippy Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain with Clippy
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets -- -D warnings
