@@ -168,11 +168,7 @@ impl Searcher {
             }
 
             // Hide already recorded
-            if filter.hide_recorded && !filter.force && history.check(&p.pid) {
-                return false;
-            }
-
-            true
+            !(filter.hide_recorded && !filter.force && history.check(&p.pid))
         }).collect();
 
         // Sort
@@ -317,5 +313,28 @@ mod tests {
         };
         let matches_chan = Searcher::find_matches(&filter_chan, &tv_cache, &radio_cache, &history);
         assert_eq!(matches_chan.len(), 2);
+
+        // Hide recorded
+        let mut history = history;
+        history
+            .add(&tv_cache.programmes[0], "flashhigh", "output.mp4", "default")
+            .unwrap();
+
+        let filter_hide = SearchFilter {
+            hide_recorded: true,
+            ..Default::default()
+        };
+        let matches_hide = Searcher::find_matches(&filter_hide, &tv_cache, &radio_cache, &history);
+        assert_eq!(matches_hide.len(), 1);
+        assert_eq!(matches_hide[0].name, "EastEnders");
+
+        // Force overrides hide_recorded
+        let filter_force = SearchFilter {
+            hide_recorded: true,
+            force: true,
+            ..Default::default()
+        };
+        let matches_force = Searcher::find_matches(&filter_force, &tv_cache, &radio_cache, &history);
+        assert_eq!(matches_force.len(), 2);
     }
 }
