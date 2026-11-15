@@ -46,7 +46,9 @@ impl PvrManager {
                             if line.is_empty() || line.starts_with('#') {
                                 continue;
                             }
-                            if let Some((k, v)) = line.split_once(|c: char| c.is_whitespace() || c == '=') {
+                            if let Some((k, v)) =
+                                line.split_once(|c: char| c.is_whitespace() || c == '=')
+                            {
                                 options.insert(k.trim().to_string(), v.trim().to_string());
                             } else {
                                 options.insert(line.to_string(), "1".to_string());
@@ -147,7 +149,11 @@ impl PvrManager {
 
         println!("All PVR Searches:");
         for job in jobs {
-            let status = if job.is_enabled { "ENABLED" } else { "DISABLED" };
+            let status = if job.is_enabled {
+                "ENABLED"
+            } else {
+                "DISABLED"
+            };
             println!("PVR Search: {} [{}]", job.name, status);
             let mut keys: Vec<&String> = job.options.keys().collect();
             keys.sort();

@@ -64,9 +64,17 @@ impl Tagger {
         cmd.arg("--title").arg(title);
         cmd.arg("--artist").arg(&prog.channel);
         cmd.arg("--album").arg(&prog.name);
-        cmd.arg("--albumArtist").arg(if prog.prog_type == ProgrammeType::Tv { "BBC TV" } else { "BBC Radio" });
+        cmd.arg("--albumArtist")
+            .arg(if prog.prog_type == ProgrammeType::Tv {
+                "BBC TV"
+            } else {
+                "BBC Radio"
+            });
         cmd.arg("--comment").arg(&prog.desc);
-        cmd.arg("--longdesc").arg(format!("{}\n\nPID: {}\nURL: {}", prog.desc, prog.pid, prog.web));
+        cmd.arg("--longdesc").arg(format!(
+            "{}\n\nPID: {}\nURL: {}",
+            prog.desc, prog.pid, prog.web
+        ));
 
         if let Some(ep) = prog.episodenum {
             cmd.arg("--tracknum").arg(ep.to_string());
@@ -128,7 +136,8 @@ impl Tagger {
         cmd.arg("-metadata").arg(format!("artist={}", prog.channel));
         cmd.arg("-metadata").arg(format!("album={}", prog.name));
         cmd.arg("-metadata").arg(format!("comment={}", prog.desc));
-        cmd.arg("-metadata").arg(format!("description={}", prog.desc));
+        cmd.arg("-metadata")
+            .arg(format!("description={}", prog.desc));
         cmd.arg("-metadata").arg(format!("synopsis={}", prog.desc));
         if let Some(s) = prog.seriesnum {
             cmd.arg("-metadata").arg(format!("season_number={}", s));

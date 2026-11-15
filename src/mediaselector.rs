@@ -81,16 +81,21 @@ impl Mediaselector {
 
         // Sort streams by quality desc, then priority asc, then bitrate desc
         resolved.streams.sort_by(|a, b| {
-            b.quality.cmp(&a.quality)
+            b.quality
+                .cmp(&a.quality)
                 .then_with(|| a.priority.cmp(&b.priority))
                 .then_with(|| b.bitrate.cmp(&a.bitrate))
         });
 
         // Deduplicate streams by href
         let mut seen_hrefs = std::collections::HashSet::new();
-        resolved.streams.retain(|s| seen_hrefs.insert(s.href.clone()));
+        resolved
+            .streams
+            .retain(|s| seen_hrefs.insert(s.href.clone()));
         let mut seen_subs = std::collections::HashSet::new();
-        resolved.subtitle_urls.retain(|u| seen_subs.insert(u.clone()));
+        resolved
+            .subtitle_urls
+            .retain(|u| seen_subs.insert(u.clone()));
 
         Ok(resolved)
     }
@@ -163,11 +168,15 @@ impl Mediaselector {
                             }
                         }
 
-                        if current_media_kind == "captions" || current_media_type == "application/ttaf+xml" {
+                        if current_media_kind == "captions"
+                            || current_media_type == "application/ttaf+xml"
+                        {
                             if !href.is_empty() {
                                 subtitles.push(href);
                             }
-                        } else if !href.is_empty() && (transfer_format == "hls" || transfer_format == "dash") {
+                        } else if !href.is_empty()
+                            && (transfer_format == "hls" || transfer_format == "dash")
+                        {
                             let quality = Self::determine_quality(
                                 prog_type,
                                 &current_media_kind,
@@ -238,5 +247,11 @@ impl Mediaselector {
                 Quality::Low
             }
         }
+    }
+}
+
+impl Default for Mediaselector {
+    fn default() -> Self {
+        Self::new()
     }
 }

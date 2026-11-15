@@ -51,7 +51,9 @@ impl PostProcessor {
         }
 
         // File prefix
-        let prefix_fmt = options.file_prefix.unwrap_or("<name> - <episode> <pid> <version>");
+        let prefix_fmt = options
+            .file_prefix
+            .unwrap_or("<name> - <episode> <pid> <version>");
         let prefix = substitute_template(prefix_fmt, &vars);
         let clean_prefix = sanitize_filename(&prefix, options.keep_whitespace);
 
@@ -118,8 +120,12 @@ impl PostProcessor {
         }
 
         // Bitstream filter for AAC in TS
-        let is_ts = audio_file.map(|p| p.extension().map(|e| e == "ts").unwrap_or(false)).unwrap_or(false)
-            || video_file.map(|p| p.extension().map(|e| e == "ts").unwrap_or(false)).unwrap_or(false);
+        let is_ts = audio_file
+            .map(|p| p.extension().map(|e| e == "ts").unwrap_or(false))
+            .unwrap_or(false)
+            || video_file
+                .map(|p| p.extension().map(|e| e == "ts").unwrap_or(false))
+                .unwrap_or(false);
 
         if is_ts {
             cmd.arg("-bsf:a").arg("aac_adtstoasc");
@@ -149,18 +155,12 @@ impl PostProcessor {
 
         #[cfg(target_family = "unix")]
         {
-            let _ = Command::new("sh")
-                .arg("-c")
-                .arg(&command_str)
-                .status();
+            let _ = Command::new("sh").arg("-c").arg(&command_str).status();
         }
 
         #[cfg(target_family = "windows")]
         {
-            let _ = Command::new("cmd")
-                .arg("/C")
-                .arg(&command_str)
-                .status();
+            let _ = Command::new("cmd").arg("/C").arg(&command_str).status();
         }
     }
 }

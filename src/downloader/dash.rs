@@ -28,7 +28,11 @@ impl DashDownloader {
     }
 
     /// Fetches and parses DASH MPD manifest
-    pub async fn parse_manifest(&self, mpd_url: &str) -> Result<(Option<DashTrack>, Option<DashTrack>), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn parse_manifest(
+        &self,
+        mpd_url: &str,
+    ) -> Result<(Option<DashTrack>, Option<DashTrack>), Box<dyn std::error::Error + Send + Sync>>
+    {
         let resp = self.client.get(mpd_url).send().await?;
         let base_url = resp.url().clone();
         let content = resp.text().await?;
@@ -39,7 +43,6 @@ impl DashDownloader {
         let mut best_video: Option<DashTrack> = None;
         let mut best_audio: Option<DashTrack> = None;
 
-        let mut in_adaptation = false;
         let mut current_mime = String::new();
         let mut template_init = String::new();
         let mut template_media = String::new();
@@ -57,17 +60,18 @@ impl DashDownloader {
                     if name.as_ref() == "MPD" {
                         for attr in e.attributes().flatten() {
                             if attr.key.as_ref() == "mediaPresentationDuration" {
-                                media_presentation_duration = Self::parse_iso_duration(attr.value.as_ref());
+                                media_presentation_duration =
+                                    Self::parse_iso_duration(attr.value.as_ref());
                             }
                         }
                     } else if name.as_ref() == "AdaptationSet" {
-                        in_adaptation = true;
                         current_mime.clear();
                         template_init.clear();
                         template_media.clear();
 
                         for attr in e.attributes().flatten() {
-                            if attr.key.as_ref() == "mimeType" || attr.key.as_ref() == "contentType" {
+                            if attr.key.as_ref() == "mimeType" || attr.key.as_ref() == "contentType"
+                            {
                                 current_mime = attr.value.as_ref().to_string();
                             }
                         }
@@ -100,7 +104,10 @@ impl DashDownloader {
                             }
                         }
 
-                        let total_segments = if segment_duration > 0 && timescale > 0 && media_presentation_duration > 0.0 {
+                        let total_segments = if segment_duration > 0
+                            && timescale > 0
+                            && media_presentation_duration > 0.0
+                        {
                             let seg_len_secs = segment_duration as f64 / timescale as f64;
                             (media_presentation_duration / seg_len_secs).ceil() as u64
                         } else {
@@ -132,19 +139,21 @@ impl DashDownloader {
                         };
 
                         if rep_mime.contains("video") {
-                            if best_video.as_ref().map(|v| bandwidth > v.bandwidth).unwrap_or(true) {
+                            if best_video
+                                .as_ref()
+                                .map(|v| bandwidth > v.bandwidth)
+                                .unwrap_or(true)
+                            {
                                 best_video = Some(track);
                             }
                         } else if rep_mime.contains("audio")
-                            && best_audio.as_ref().map(|a| bandwidth > a.bandwidth).unwrap_or(true)
+                            && best_audio
+                                .as_ref()
+                                .map(|a| bandwidth > a.bandwidth)
+                                .unwrap_or(true)
                         {
                             best_audio = Some(track);
                         }
-                    }
-                }
-                Ok(Event::End(ref e)) => {
-                    if e.name().as_ref() == "AdaptationSet" {
-                        in_adaptation = false;
                     }
                 }
                 Ok(Event::Eof) => break,
@@ -163,11 +172,24 @@ impl DashDownloader {
         track: &DashTrack,
         output_path: &Path,
     ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+        self.download_track_with_progress(track, output_path, None)
+            .await
+    }
+
+    /// Downloads a single DASH track with optional progress reporting
+    pub async fn download_track_with_progress(
+        &self,
+        track: &DashTrack,
+        output_path: &Path,
+        progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
+    ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
         let mut file = File::create(output_path)?;
         let mut downloaded_bytes = 0u64;
 
         // Download init segment
-        let init_url = track.init_url_template.replace("$RepresentationID$", &track.id);
+        let init_url = track
+            .init_url_template
+            .replace("$RepresentationID$", &track.id);
         if let Ok(resp) = self.client.get(&init_url).send().await {
             if resp.status().is_success() {
                 if let Ok(bytes) = resp.bytes().await {
@@ -185,8 +207,11 @@ impl DashDownloader {
                 .progress_chars("#>-"),
         );
 
-        for seq in track.start_number..(track.start_number + track.total_segments) {
-            let seg_url = track.media_url_template
+        for (idx, seq) in
+            (track.start_number..(track.start_number + track.total_segments)).enumerate()
+        {
+            let seg_url = track
+                .media_url_template
                 .replace("$RepresentationID$", &track.id)
                 .replace("$Number$", &seq.to_string());
 
@@ -212,6 +237,9 @@ impl DashDownloader {
                 break;
             }
             pb.inc(1);
+            if let Some(cb) = progress {
+                cb((idx + 1) as u64, track.total_segments);
+            }
         }
 
         pb.finish_with_message("Done");

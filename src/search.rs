@@ -63,7 +63,8 @@ impl Searcher {
             let t = term.trim();
             if let Ok(idx) = t.parse::<usize>() {
                 index_searches.push(idx);
-            } else if let Some(stripped) = t.strip_prefix("pid:").or_else(|| t.strip_prefix("PID:")) {
+            } else if let Some(stripped) = t.strip_prefix("pid:").or_else(|| t.strip_prefix("PID:"))
+            {
                 pid_searches.push(stripped.trim().to_string());
             } else if !t.is_empty() {
                 // If the term is "*", convert to ".*"
@@ -75,101 +76,120 @@ impl Searcher {
         }
 
         // Channel regexes
-        let channel_re = filter.channel_filter.as_ref().and_then(|c| Regex::new(&format!("(?i){}", c)).ok());
-        let exclude_channel_re = filter.exclude_channel_filter.as_ref().and_then(|c| Regex::new(&format!("(?i){}", c)).ok());
+        let channel_re = filter
+            .channel_filter
+            .as_ref()
+            .and_then(|c| Regex::new(&format!("(?i){}", c)).ok());
+        let exclude_channel_re = filter
+            .exclude_channel_filter
+            .as_ref()
+            .and_then(|c| Regex::new(&format!("(?i){}", c)).ok());
 
-        let mut matched: Vec<&'a Programme> = candidates.into_iter().filter(|p| {
-            // Index number match
-            if !index_searches.is_empty() && index_searches.contains(&p.index) {
-                return true;
-            }
+        let mut matched: Vec<&'a Programme> = candidates
+            .into_iter()
+            .filter(|p| {
+                // Index number match
+                if !index_searches.is_empty() && index_searches.contains(&p.index) {
+                    return true;
+                }
 
-            // PID match
-            if !pid_searches.is_empty() && pid_searches.iter().any(|pid| pid.eq_ignore_ascii_case(&p.pid)) {
-                return true;
-            }
+                // PID match
+                if !pid_searches.is_empty()
+                    && pid_searches
+                        .iter()
+                        .any(|pid| pid.eq_ignore_ascii_case(&p.pid))
+                {
+                    return true;
+                }
 
-            // If we have index or PID searches and NO regex searches, skip non-matches
-            if (!index_searches.is_empty() || !pid_searches.is_empty()) && regex_searches.is_empty() {
-                return false;
-            }
-
-            // Regex text matching
-            if !regex_searches.is_empty() {
-                let text_to_match = if filter.long_search {
-                    format!("{} {} {}", p.name, p.episode, p.desc)
-                } else {
-                    format!("{} {}", p.name, p.episode)
-                };
-                if !regex_searches.iter().all(|r| r.is_match(&text_to_match)) {
+                // If we have index or PID searches and NO regex searches, skip non-matches
+                if (!index_searches.is_empty() || !pid_searches.is_empty())
+                    && regex_searches.is_empty()
+                {
                     return false;
                 }
-            } else if filter.search_terms.is_empty() {
-                // If no search terms, default matches all unless specific filters apply
-            }
 
-            // Channel filter
-            if let Some(ref re) = channel_re {
-                if !re.is_match(&p.channel) {
-                    return false;
+                // Regex text matching
+                if !regex_searches.is_empty() {
+                    let text_to_match = if filter.long_search {
+                        format!("{} {} {}", p.name, p.episode, p.desc)
+                    } else {
+                        format!("{} {}", p.name, p.episode)
+                    };
+                    if !regex_searches.iter().all(|r| r.is_match(&text_to_match)) {
+                        return false;
+                    }
+                } else if filter.search_terms.is_empty() {
+                    // If no search terms, default matches all unless specific filters apply
                 }
-            }
-            if let Some(ref re) = exclude_channel_re {
-                if re.is_match(&p.channel) {
-                    return false;
-                }
-            }
 
-            // Time filters
-            if !filter.future {
-                let start_time = chrono::DateTime::parse_from_rfc3339(&p.available)
-                    .map(|dt| dt.timestamp())
-                    .unwrap_or(0);
-                if start_time > now {
-                    return false;
+                // Channel filter
+                if let Some(ref re) = channel_re {
+                    if !re.is_match(&p.channel) {
+                        return false;
+                    }
                 }
-            }
+                if let Some(ref re) = exclude_channel_re {
+                    if re.is_match(&p.channel) {
+                        return false;
+                    }
+                }
 
-            if let Some(since_h) = filter.since_hours {
-                if p.timeadded < now - (since_h * 3600) {
-                    return false;
+                // Time filters
+                if !filter.future {
+                    let start_time = chrono::DateTime::parse_from_rfc3339(&p.available)
+                        .map(|dt| dt.timestamp())
+                        .unwrap_or(0);
+                    if start_time > now {
+                        return false;
+                    }
                 }
-            }
-            if let Some(before_h) = filter.before_hours {
-                if p.timeadded >= now - (before_h * 3600) {
-                    return false;
-                }
-            }
 
-            if let Some(avail_since_h) = filter.available_since_hours {
-                let start = chrono::DateTime::parse_from_rfc3339(&p.available).map(|dt| dt.timestamp()).unwrap_or(0);
-                if start < now - (avail_since_h * 3600) {
-                    return false;
+                if let Some(since_h) = filter.since_hours {
+                    if p.timeadded < now - (since_h * 3600) {
+                        return false;
+                    }
                 }
-            }
-
-            if let Some(avail_before_h) = filter.available_before_hours {
-                let start = chrono::DateTime::parse_from_rfc3339(&p.available).map(|dt| dt.timestamp()).unwrap_or(0);
-                if start >= now - (avail_before_h * 3600) {
-                    return false;
+                if let Some(before_h) = filter.before_hours {
+                    if p.timeadded >= now - (before_h * 3600) {
+                        return false;
+                    }
                 }
-            }
 
-            if let Some(exp_after_h) = filter.expires_after_hours {
-                if p.expires <= now + (exp_after_h * 3600) {
-                    return false;
+                if let Some(avail_since_h) = filter.available_since_hours {
+                    let start = chrono::DateTime::parse_from_rfc3339(&p.available)
+                        .map(|dt| dt.timestamp())
+                        .unwrap_or(0);
+                    if start < now - (avail_since_h * 3600) {
+                        return false;
+                    }
                 }
-            }
 
-            if let Some(exp_before_h) = filter.expires_before_hours {
-                if p.expires > now + (exp_before_h * 3600) {
-                    return false;
+                if let Some(avail_before_h) = filter.available_before_hours {
+                    let start = chrono::DateTime::parse_from_rfc3339(&p.available)
+                        .map(|dt| dt.timestamp())
+                        .unwrap_or(0);
+                    if start >= now - (avail_before_h * 3600) {
+                        return false;
+                    }
                 }
-            }
 
-            // Hide already recorded
-            !(filter.hide_recorded && !filter.force && history.check(&p.pid))
-        }).collect();
+                if let Some(exp_after_h) = filter.expires_after_hours {
+                    if p.expires <= now + (exp_after_h * 3600) {
+                        return false;
+                    }
+                }
+
+                if let Some(exp_before_h) = filter.expires_before_hours {
+                    if p.expires > now + (exp_before_h * 3600) {
+                        return false;
+                    }
+                }
+
+                // Hide already recorded
+                !(filter.hide_recorded && !filter.force && history.check(&p.pid))
+            })
+            .collect();
 
         // Sort
         if let Some(ref field) = filter.sort_field {
@@ -213,7 +233,10 @@ impl Searcher {
                 } else {
                     format!(" - {}", p.episode)
                 };
-                println!("{}:  {}{}, {}, {}", p.index, p.name, ep_part, p.channel, p.pid);
+                println!(
+                    "{}:  {}{}, {}, {}",
+                    p.index, p.name, ep_part, p.channel, p.pid
+                );
             }
         }
         println!("INFO: {} Matching Programmes", results.len());
@@ -227,13 +250,20 @@ impl Searcher {
         } else {
             format!(" - {}", p.episode)
         };
-        println!("{}:  {}{}, {}, {}", p.index, p.name, ep_part, p.channel, p.pid);
+        println!(
+            "{}:  {}{}, {}, {}",
+            p.index, p.name, ep_part, p.channel, p.pid
+        );
         println!();
         println!("INFO: Metadata for {}", p.pid);
         println!("available:\t{}", p.available);
         println!("channel:\t{}", p.channel);
         println!("desc:\t\t{}", p.desc);
-        println!("duration:\t{} ({})", p.duration, crate::utils::format_duration(p.duration));
+        println!(
+            "duration:\t{} ({})",
+            p.duration,
+            crate::utils::format_duration(p.duration)
+        );
         println!("episode:\t{}", p.episode);
         if let Some(ep_num) = p.episodenum {
             println!("episodenum:\t{}", ep_num);
@@ -317,7 +347,12 @@ mod tests {
         // Hide recorded
         let mut history = history;
         history
-            .add(&tv_cache.programmes[0], "flashhigh", "output.mp4", "default")
+            .add(
+                &tv_cache.programmes[0],
+                "flashhigh",
+                "output.mp4",
+                "default",
+            )
             .unwrap();
 
         let filter_hide = SearchFilter {
@@ -334,7 +369,42 @@ mod tests {
             force: true,
             ..Default::default()
         };
-        let matches_force = Searcher::find_matches(&filter_force, &tv_cache, &radio_cache, &history);
+        let matches_force =
+            Searcher::find_matches(&filter_force, &tv_cache, &radio_cache, &history);
         assert_eq!(matches_force.len(), 2);
+    }
+
+    #[test]
+    fn title_search_returns_all_matching_programmes() {
+        let mut tv_cache = Cache::new();
+        tv_cache.programmes.extend([
+            Programme {
+                index: 1,
+                name: "Celebrity Traitors".to_string(),
+                pid: "b01abcde".to_string(),
+                ..Default::default()
+            },
+            Programme {
+                index: 2,
+                name: "The Traitors: Ireland".to_string(),
+                pid: "b01fghij".to_string(),
+                ..Default::default()
+            },
+        ]);
+        let radio_cache = Cache::new();
+        let history_file = NamedTempFile::new().unwrap();
+        let history = History::new(history_file.path());
+        let filter = SearchFilter {
+            search_terms: vec!["traitors".to_string()],
+            prog_types: vec![ProgrammeType::Tv],
+            ..Default::default()
+        };
+
+        let matches = Searcher::find_matches(&filter, &tv_cache, &radio_cache, &history);
+        let names: Vec<&str> = matches
+            .iter()
+            .map(|programme| programme.name.as_str())
+            .collect();
+        assert_eq!(names, ["Celebrity Traitors", "The Traitors: Ireland"]);
     }
 }

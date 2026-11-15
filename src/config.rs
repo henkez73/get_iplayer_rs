@@ -72,7 +72,10 @@ impl Config {
                 }
                 let mut parts = trimmed.splitn(2, |c: char| c.is_whitespace() || c == '=');
                 let key = parts.next().unwrap_or("").trim().to_string();
-                let val = parts.next().map(|v| v.trim().to_string()).unwrap_or_else(|| "1".to_string());
+                let val = parts
+                    .next()
+                    .map(|v| v.trim().to_string())
+                    .unwrap_or_else(|| "1".to_string());
                 if !key.is_empty() {
                     self.options.insert(key, val);
                 }

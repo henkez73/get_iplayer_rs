@@ -42,7 +42,8 @@ impl BbcApi {
         }
 
         // Regex fallback
-        let re = Regex::new(r"/(?:episode|play|programmes|brand)/([b-df-hj-np-tv-z0-9]{8,})").unwrap();
+        let re =
+            Regex::new(r"/(?:episode|play|programmes|brand)/([b-df-hj-np-tv-z0-9]{8,})").unwrap();
         if let Some(caps) = re.captures(input) {
             if let Some(m) = caps.get(1) {
                 return Some(m.as_str().to_string());
@@ -67,12 +68,10 @@ impl BbcApi {
         let playlist_url = format!("https://www.bbc.co.uk/programmes/{}/playlist.json", pid);
         let resp = self.client.get(&playlist_url).send().await;
 
-        let mut got_json = false;
         if let Ok(res) = resp {
             if res.status().is_success() {
                 if let Ok(body) = res.text().await {
                     if let Ok(json) = serde_json::from_str::<Value>(&body) {
-                        got_json = true;
                         self.populate_from_playlist_json(&mut prog, &json);
                     }
                 }
@@ -122,7 +121,8 @@ impl BbcApi {
         if let Some(def_ver) = json.get("defaultAvailableVersion") {
             if let Some(smp) = def_ver.get("smpConfig") {
                 if let Some(title) = smp.get("title").and_then(|t| t.as_str()) {
-                    let decoded = htmlescape::decode_html(title).unwrap_or_else(|_| title.to_string());
+                    let decoded =
+                        htmlescape::decode_html(title).unwrap_or_else(|_| title.to_string());
                     if let Some((n, e)) = decoded.split_once(':') {
                         prog.name = n.trim().to_string();
                         prog.episode = e.trim().to_string();
@@ -134,7 +134,8 @@ impl BbcApi {
                     prog.channel = channel.to_string();
                 }
                 if let Some(summary) = smp.get("summary").and_then(|s| s.as_str()) {
-                    prog.desc = htmlescape::decode_html(summary).unwrap_or_else(|_| summary.to_string());
+                    prog.desc =
+                        htmlescape::decode_html(summary).unwrap_or_else(|_| summary.to_string());
                 }
                 if let Some(thumb) = smp.get("holdingImageURL").and_then(|t| t.as_str()) {
                     let full_thumb = thumb.replace("$recipe", "1920xn");
@@ -170,8 +171,13 @@ impl BbcApi {
                     let mut version_name = "default".to_string();
 
                     if let Some(types) = ver.get("types").and_then(|t| t.as_array()) {
-                        let type_strs: Vec<String> = types.iter().filter_map(|t| t.as_str().map(|s| s.to_lowercase())).collect();
-                        let is_ad = type_strs.iter().any(|s| s.contains("described") || s.contains("description"));
+                        let type_strs: Vec<String> = types
+                            .iter()
+                            .filter_map(|t| t.as_str().map(|s| s.to_lowercase()))
+                            .collect();
+                        let is_ad = type_strs
+                            .iter()
+                            .any(|s| s.contains("described") || s.contains("description"));
                         let is_signed = type_strs.iter().any(|s| s.contains("sign"));
 
                         if is_ad && is_signed {
@@ -200,7 +206,8 @@ impl BbcApi {
 
         // Try extracting series and episode numbers
         if prog.episodenum.is_none() {
-            prog.episodenum = extract_episode_num(&prog.episode).or_else(|| extract_episode_num(&prog.desc));
+            prog.episodenum =
+                extract_episode_num(&prog.episode).or_else(|| extract_episode_num(&prog.desc));
         }
         if prog.seriesnum.is_none() {
             prog.seriesnum = extract_series_num(&format!("{} {}", prog.name, prog.episode));
@@ -235,7 +242,10 @@ impl BbcApi {
             let re_title = Regex::new(r"<title>(.*?)</title>").unwrap();
             if let Some(caps) = re_title.captures(html) {
                 if let Some(t) = caps.get(1) {
-                    let clean = t.as_str().replace("BBC iPlayer - ", "").replace(" - BBC Sounds", "");
+                    let clean = t
+                        .as_str()
+                        .replace("BBC iPlayer - ", "")
+                        .replace(" - BBC Sounds", "");
                     if let Some((n, e)) = clean.split_once(':') {
                         prog.name = n.trim().to_string();
                         prog.episode = e.trim().to_string();
@@ -265,7 +275,8 @@ impl BbcApi {
         let re_vpid = Regex::new(r#""vpid"\s*:\s*"([b-df-hj-np-tv-z0-9]{8,})""#).unwrap();
         if let Some(caps) = re_vpid.captures(html) {
             if let Some(vpid) = caps.get(1) {
-                prog.verpids.insert("default".to_string(), vpid.as_str().to_string());
+                prog.verpids
+                    .insert("default".to_string(), vpid.as_str().to_string());
                 prog.versions.push("default".to_string());
             }
         }
@@ -282,7 +293,10 @@ impl BbcApi {
 
         // Check https://www.bbc.co.uk/programmes/{pid}/episodes/player
         for page in 1..=10 {
-            let url = format!("https://www.bbc.co.uk/programmes/{}/episodes/player?page={}", brand_pid, page);
+            let url = format!(
+                "https://www.bbc.co.uk/programmes/{}/episodes/player?page={}",
+                brand_pid, page
+            );
             let resp = self.client.get(&url).send().await?;
             if !resp.status().is_success() {
                 break;
@@ -306,5 +320,11 @@ impl BbcApi {
         }
 
         Ok(pids)
+    }
+}
+
+impl Default for BbcApi {
+    fn default() -> Self {
+        Self::new()
     }
 }

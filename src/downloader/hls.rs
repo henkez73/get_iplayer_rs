@@ -19,7 +19,7 @@ pub struct HlsSegment {
 struct VariantStream {
     url: String,
     bandwidth: u64,
-    width: u32,
+    _width: u32,
     height: u32,
     fps: u32,
 }
@@ -55,15 +55,30 @@ impl HlsDownloader {
         while let Some(line) = lines.next() {
             let line = line.trim();
             if line.starts_with("#EXT-X-STREAM-INF") {
-                let bandwidth = re_bw.captures(line).and_then(|c| c.get(1)).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+                let bandwidth = re_bw
+                    .captures(line)
+                    .and_then(|c| c.get(1))
+                    .and_then(|m| m.as_str().parse().ok())
+                    .unwrap_or(0);
                 let (width, height) = if let Some(caps) = re_res.captures(line) {
-                    let w = caps.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-                    let h = caps.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+                    let w = caps
+                        .get(1)
+                        .and_then(|m| m.as_str().parse().ok())
+                        .unwrap_or(0);
+                    let h = caps
+                        .get(2)
+                        .and_then(|m| m.as_str().parse().ok())
+                        .unwrap_or(0);
                     (w, h)
                 } else {
                     (0, 0)
                 };
-                let fps = re_fps.captures(line).and_then(|c| c.get(1)).and_then(|m| m.as_str().parse::<f64>().ok()).unwrap_or(25.0).round() as u32;
+                let fps = re_fps
+                    .captures(line)
+                    .and_then(|c| c.get(1))
+                    .and_then(|m| m.as_str().parse::<f64>().ok())
+                    .unwrap_or(25.0)
+                    .round() as u32;
 
                 if let Some(next_line) = lines.next() {
                     let next_trimmed = next_line.trim();
@@ -71,7 +86,7 @@ impl HlsDownloader {
                         variants.push(VariantStream {
                             url: next_trimmed.to_string(),
                             bandwidth,
-                            width,
+                            _width: width,
                             height,
                             fps,
                         });
@@ -100,7 +115,8 @@ impl HlsDownloader {
                 }
             };
 
-            let mut matched_variants: Vec<&VariantStream> = variants.iter().filter(|v| matches_quality(v)).collect();
+            let mut matched_variants: Vec<&VariantStream> =
+                variants.iter().filter(|v| matches_quality(v)).collect();
             if prefer_25fps {
                 matched_variants.sort_by_key(|v| if v.fps == 25 { 0 } else { 1 });
             }
@@ -127,7 +143,10 @@ impl HlsDownloader {
     }
 
     /// Parses media playlist segments
-    pub async fn parse_segments(&self, playlist_url: &str) -> Result<Vec<HlsSegment>, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn parse_segments(
+        &self,
+        playlist_url: &str,
+    ) -> Result<Vec<HlsSegment>, Box<dyn std::error::Error + Send + Sync>> {
         let resp = self.client.get(playlist_url).send().await?;
         let base_url = resp.url().clone();
         let content = resp.text().await?;
@@ -138,7 +157,11 @@ impl HlsDownloader {
         for line in content.lines() {
             let line = line.trim();
             if line.starts_with("#EXTINF:") {
-                let dur_str = line.trim_start_matches("#EXTINF:").split(',').next().unwrap_or("0");
+                let dur_str = line
+                    .trim_start_matches("#EXTINF:")
+                    .split(',')
+                    .next()
+                    .unwrap_or("0");
                 current_duration = dur_str.parse().unwrap_or(0.0);
             } else if !line.is_empty() && !line.starts_with('#') {
                 let mut seg_url = if line.starts_with("http") {
@@ -174,7 +197,30 @@ impl HlsDownloader {
         prefer_25fps: bool,
         resume: bool,
     ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
-        let media_url = self.resolve_media_playlist(playlist_url, target_quality, prefer_25fps).await?;
+        self.download_with_progress(
+            playlist_url,
+            output_ts,
+            target_quality,
+            prefer_25fps,
+            resume,
+            None,
+        )
+        .await
+    }
+
+    /// Downloads HLS segments with optional progress reporting
+    pub async fn download_with_progress(
+        &self,
+        playlist_url: &str,
+        output_ts: &Path,
+        target_quality: Option<&Quality>,
+        prefer_25fps: bool,
+        resume: bool,
+        progress: Option<&(dyn Fn(usize, usize) + Send + Sync)>,
+    ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+        let media_url = self
+            .resolve_media_playlist(playlist_url, target_quality, prefer_25fps)
+            .await?;
         let segments = self.parse_segments(&media_url).await?;
 
         if segments.is_empty() {
@@ -225,6 +271,9 @@ impl HlsDownloader {
             }
 
             pb.inc(1);
+            if let Some(cb) = progress {
+                cb(i + 1, total_segments);
+            }
         }
 
         pb.finish_with_message("Done");

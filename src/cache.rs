@@ -31,10 +31,21 @@ impl Cache {
         if let Ok(file) = File::open(path) {
             let reader = BufReader::new(file);
             let mut format_cols: Vec<String> = vec![
-                "index".into(), "type".into(), "name".into(), "episode".into(),
-                "seriesnum".into(), "episodenum".into(), "pid".into(), "channel".into(),
-                "available".into(), "expires".into(), "duration".into(), "desc".into(),
-                "web".into(), "thumbnail".into(), "timeadded".into(),
+                "index".into(),
+                "type".into(),
+                "name".into(),
+                "episode".into(),
+                "seriesnum".into(),
+                "episodenum".into(),
+                "pid".into(),
+                "channel".into(),
+                "available".into(),
+                "expires".into(),
+                "duration".into(),
+                "desc".into(),
+                "web".into(),
+                "thumbnail".into(),
+                "timeadded".into(),
             ];
 
             for line in reader.lines().map_while(Result::ok) {
@@ -44,7 +55,8 @@ impl Cache {
                 }
                 if line.starts_with('#') {
                     // Check if custom header
-                    let cols: Vec<String> = line.trim_start_matches('#')
+                    let cols: Vec<String> = line
+                        .trim_start_matches('#')
                         .split('|')
                         .map(|s| s.trim().to_string())
                         .filter(|s| !s.is_empty())
@@ -83,11 +95,17 @@ impl Cache {
                 let channel = map.get("channel").unwrap_or(&"").to_string();
                 let available = map.get("available").unwrap_or(&"").to_string();
                 let expires: i64 = map.get("expires").and_then(|s| s.parse().ok()).unwrap_or(0);
-                let duration: u32 = map.get("duration").and_then(|s| s.parse().ok()).unwrap_or(0);
+                let duration: u32 = map
+                    .get("duration")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
                 let desc = map.get("desc").unwrap_or(&"").to_string();
                 let web = map.get("web").unwrap_or(&"").to_string();
                 let thumbnail = map.get("thumbnail").unwrap_or(&"").to_string();
-                let timeadded: i64 = map.get("timeadded").and_then(|s| s.parse().ok()).unwrap_or(0);
+                let timeadded: i64 = map
+                    .get("timeadded")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
 
                 let prog = Programme {
                     index,
@@ -141,7 +159,10 @@ impl Cache {
                     p.available,
                     p.expires,
                     p.duration,
-                    p.desc.replace('|', "-").replace('\n', " ").replace('\r', ""),
+                    p.desc
+                        .replace('|', "-")
+                        .replace('\n', " ")
+                        .replace('\r', ""),
                     p.web,
                     p.thumbnail,
                     p.timeadded
@@ -155,7 +176,9 @@ impl Cache {
     pub fn sort_and_reindex(&mut self, min_index: usize) {
         // Sort by name, then series, then episode, then available
         self.programmes.sort_by(|a, b| {
-            a.name.to_lowercase().cmp(&b.name.to_lowercase())
+            a.name
+                .to_lowercase()
+                .cmp(&b.name.to_lowercase())
                 .then_with(|| a.seriesnum.cmp(&b.seriesnum))
                 .then_with(|| a.episodenum.cmp(&b.episodenum))
                 .then_with(|| a.episode.to_lowercase().cmp(&b.episode.to_lowercase()))
@@ -172,7 +195,17 @@ impl Cache {
     }
 
     pub fn most_recent_addition(&self) -> i64 {
-        self.programmes.iter().map(|p| p.timeadded).max().unwrap_or(0)
+        self.programmes
+            .iter()
+            .map(|p| p.timeadded)
+            .max()
+            .unwrap_or(0)
+    }
+}
+
+impl Default for Cache {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
