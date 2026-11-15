@@ -63,10 +63,10 @@ pub enum Quality {
     Web,    // 396p
     Mobile, // 288p
     // Radio
-    High,   // 320k
-    Std,    // 128k
-    Med,    // 96k
-    Low,    // 48k
+    High, // 320k
+    Std,  // 128k
+    Med,  // 96k
+    Low,  // 48k
 }
 
 impl Quality {
@@ -111,13 +111,13 @@ pub struct Programme {
     pub episodenum: Option<u32>,
     pub pid: String,
     pub channel: String,
-    pub available: String,      // ISO string or formatted date
-    pub expires: i64,          // epoch seconds
-    pub duration: u32,         // seconds
+    pub available: String, // ISO string or formatted date
+    pub expires: i64,      // epoch seconds
+    pub duration: u32,     // seconds
     pub desc: String,
     pub web: String,
     pub thumbnail: String,
-    pub timeadded: i64,        // epoch seconds
+    pub timeadded: i64, // epoch seconds
     // Additional runtime metadata
     pub categories: String,
     pub verpids: HashMap<String, String>, // version -> verpid
@@ -162,8 +162,22 @@ impl Programme {
     pub fn template_vars(&self, version: &str, ext: &str) -> HashMap<&'static str, String> {
         let mut vars = HashMap::new();
         vars.insert("name", self.name.clone());
-        vars.insert("episode", if self.episode.is_empty() || self.episode == "-" { self.name.clone() } else { self.episode.clone() });
-        vars.insert("episodeshort", if self.episode.is_empty() || self.episode == "-" { self.name.clone() } else { self.episode.clone() });
+        vars.insert(
+            "episode",
+            if self.episode.is_empty() || self.episode == "-" {
+                self.name.clone()
+            } else {
+                self.episode.clone()
+            },
+        );
+        vars.insert(
+            "episodeshort",
+            if self.episode.is_empty() || self.episode == "-" {
+                self.name.clone()
+            } else {
+                self.episode.clone()
+            },
+        );
         vars.insert("pid", self.pid.clone());
         vars.insert("version", version.to_string());
         vars.insert("channel", self.channel.clone());
@@ -181,7 +195,10 @@ impl Programme {
         }
         if let Some(e) = self.episodenum {
             vars.insert("episodenum", e.to_string());
-            vars.insert("senum", format!("s{:02}e{:02}", self.seriesnum.unwrap_or(1), e));
+            vars.insert(
+                "senum",
+                format!("s{:02}e{:02}", self.seriesnum.unwrap_or(1), e),
+            );
         } else {
             vars.insert("episodenum", "".to_string());
             vars.insert("senum", "".to_string());
@@ -222,8 +239,8 @@ pub struct StreamConnection {
     pub supplier: String,        // "akamai", "limelight", "cloudfront", "bidi"
     pub protocol: String,        // "https", "http"
     pub priority: u32,
-    pub kind: String,            // "video", "audio", "captions"
-    pub bitrate: u32,            // kbps
+    pub kind: String, // "video", "audio", "captions"
+    pub bitrate: u32, // kbps
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub fps: Option<u32>,

@@ -115,7 +115,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Setup helpers
     let bbc_api = BbcApi::new();
     let mediaselector = Mediaselector::new();
-    let downloader = Downloader::new(if cli.no_proxy { None } else { cli.proxy.as_deref() });
+    let downloader = Downloader::new(if cli.no_proxy {
+        None
+    } else {
+        cli.proxy.as_deref()
+    });
     let mut history = History::new(config.history_file());
     let postproc = PostProcessor::new(cli.ffmpeg.as_deref(), None);
     let tagger = Tagger::new(cli.atomicparsley.as_deref(), &postproc.ffmpeg_path);
@@ -197,21 +201,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     if cli.refresh || cli.cache_rebuild {
         let indexer = Indexer::new(7);
-        let days = cli.refresh_limit.unwrap_or(if cli.cache_rebuild { 30 } else { 7 });
+        let days = cli
+            .refresh_limit
+            .unwrap_or(if cli.cache_rebuild { 30 } else { 7 });
 
         let prog_type: ProgrammeType = cli.prog_type.parse().unwrap_or(ProgrammeType::Tv);
         if prog_type == ProgrammeType::Tv || prog_type == ProgrammeType::All {
             if cli.cache_rebuild {
                 tv_cache = Cache::new();
             }
-            indexer.refresh(&mut tv_cache, ProgrammeType::Tv, days, cli.refresh_future, cli.verbose).await?;
+            indexer
+                .refresh(
+                    &mut tv_cache,
+                    ProgrammeType::Tv,
+                    days,
+                    cli.refresh_future,
+                    cli.verbose,
+                )
+                .await?;
             tv_cache.save_file(&tv_cache_file)?;
         }
         if prog_type == ProgrammeType::Radio || prog_type == ProgrammeType::All {
             if cli.cache_rebuild {
                 radio_cache = Cache::new();
             }
-            indexer.refresh(&mut radio_cache, ProgrammeType::Radio, days, cli.refresh_future, cli.verbose).await?;
+            indexer
+                .refresh(
+                    &mut radio_cache,
+                    ProgrammeType::Radio,
+                    days,
+                    cli.refresh_future,
+                    cli.verbose,
+                )
+                .await?;
             radio_cache.save_file(&radio_cache_file)?;
         }
 
@@ -268,8 +290,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
         for pid in final_pids {
             // Check cache first for known programme metadata
-            let cached_prog = tv_cache.by_pid.get(&pid).map(|&idx| tv_cache.programmes[idx].clone())
-                .or_else(|| radio_cache.by_pid.get(&pid).map(|&idx| radio_cache.programmes[idx].clone()));
+            let cached_prog = tv_cache
+                .by_pid
+                .get(&pid)
+                .map(|&idx| tv_cache.programmes[idx].clone())
+                .or_else(|| {
+                    radio_cache
+                        .by_pid
+                        .get(&pid)
+                        .map(|&idx| radio_cache.programmes[idx].clone())
+                });
 
             let mut prog = match cached_prog {
                 Some(p) => p,
@@ -285,7 +315,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
 
             if cli.mark_downloaded {
-                println!("INFO: Marking downloaded: {} - {} ({})", prog.name, prog.episode, prog.pid);
+                println!(
+                    "INFO: Marking downloaded: {} - {} ({})",
+                    prog.name, prog.episode, prog.pid
+                );
                 history.add(&prog, "marked", "", "default")?;
                 continue;
             }
@@ -311,8 +344,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
 
             println!("INFO: Running PVR search '{}'...", job.name);
-            let search_term = job.options.get("search").cloned().unwrap_or_else(|| ".*".to_string());
-            let job_type_str = job.options.get("type").cloned().unwrap_or_else(|| "tv".to_string());
+            let search_term = job
+                .options
+                .get("search")
+                .cloned()
+                .unwrap_or_else(|| ".*".to_string());
+            let job_type_str = job
+                .options
+                .get("type")
+                .cloned()
+                .unwrap_or_else(|| "tv".to_string());
             let job_prog_type: ProgrammeType = job_type_str.parse().unwrap_or(ProgrammeType::Tv);
 
             let filter = SearchFilter {
@@ -324,7 +365,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             };
 
             let matches = Searcher::find_matches(&filter, &tv_cache, &radio_cache, &history);
-            println!("INFO: Found {} new matching programmes for PVR search '{}'", matches.len(), job.name);
+            println!(
+                "INFO: Found {} new matching programmes for PVR search '{}'",
+                matches.len(),
+                job.name
+            );
 
             for matched_prog in matches {
                 let mut prog = matched_prog.clone();
@@ -376,7 +421,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut seen_series = std::collections::HashSet::new();
         for p in &matches {
             if seen_series.insert(p.name.clone()) {
-                let job_name = format!("{}_{}", utils::sanitize_filename(&p.name, false), p.prog_type.as_str());
+                let job_name = format!(
+                    "{}_{}",
+                    utils::sanitize_filename(&p.name, false),
+                    p.prog_type.as_str()
+                );
                 let mut opts = std::collections::HashMap::new();
                 opts.insert("search".to_string(), format!("^{}$", p.name));
                 opts.insert("type".to_string(), p.prog_type.as_str().to_string());
@@ -389,7 +438,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Mark downloaded
     if cli.mark_downloaded {
         for p in &matches {
-            println!("INFO: Mark downloaded {}: '{} - {} ({})'", p.prog_type.as_str(), p.name, p.episode, p.pid);
+            println!(
+                "INFO: Mark downloaded {}: '{} - {} ({})'",
+                p.prog_type.as_str(),
+                p.name,
+                p.episode,
+                p.pid
+            );
             if !cli.test {
                 history.add(p, "marked", "", "default")?;
             }
@@ -412,11 +467,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
 
     // Recording matching programmes
-    println!("INFO: Found {} matching programmes to record", matches.len());
+    println!(
+        "INFO: Found {} matching programmes to record",
+        matches.len()
+    );
     for matched_prog in matches {
         let mut prog = matched_prog.clone();
         if !cli.force && history.check(&prog.pid) {
-            println!("INFO: Already in history: {} - {} ({})", prog.name, prog.episode, prog.pid);
+            println!(
+                "INFO: Already in history: {} - {} ({})",
+                prog.name, prog.episode, prog.pid
+            );
             continue;
         }
 
@@ -449,7 +510,10 @@ async fn download_programme(
     let downloader = services.downloader;
     let postproc = services.postproc;
     let tagger = services.tagger;
-    println!("INFO: Processing '{} - {}' ({})", prog.name, prog.episode, prog.pid);
+    println!(
+        "INFO: Processing '{} - {}' ({})",
+        prog.name, prog.episode, prog.pid
+    );
 
     // 1. Resolve version PIDs
     if prog.verpids.is_empty() {
@@ -487,10 +551,15 @@ async fn download_programme(
         selected_vpid = first_vpid.clone();
     }
 
-    println!("INFO: Selected version: '{}' (vpid: {})", selected_version, selected_vpid);
+    println!(
+        "INFO: Selected version: '{}' (vpid: {})",
+        selected_version, selected_vpid
+    );
 
     // 3. Resolve stream links from Mediaselector
-    let resolved = mediaselector.get_streams(&selected_vpid, prog.prog_type).await?;
+    let resolved = mediaselector
+        .get_streams(&selected_vpid, prog.prog_type)
+        .await?;
 
     if resolved.is_geoblocked {
         eprintln!("WARNING: Programme is geo-blocked (UK IP address required)");
@@ -503,12 +572,22 @@ async fn download_programme(
 
     // 4. Determine output paths
     let default_output_dir = PathBuf::from(if prog.prog_type == ProgrammeType::Tv {
-        cli.output_tv.as_deref().or(cli.output_dir.as_deref()).unwrap_or(".")
+        cli.output_tv
+            .as_deref()
+            .or(cli.output_dir.as_deref())
+            .unwrap_or(".")
     } else {
-        cli.output_radio.as_deref().or(cli.output_dir.as_deref()).unwrap_or(".")
+        cli.output_radio
+            .as_deref()
+            .or(cli.output_dir.as_deref())
+            .unwrap_or(".")
     });
 
-    let ext = if prog.prog_type == ProgrammeType::Tv && !cli.audio_only { "mp4" } else { "m4a" };
+    let ext = if prog.prog_type == ProgrammeType::Tv && !cli.audio_only {
+        "mp4"
+    } else {
+        "m4a"
+    };
     let (target_dir, target_file) = PostProcessor::generate_paths(
         prog,
         &selected_version,
@@ -528,7 +607,8 @@ async fn download_programme(
 
     // 5. Handle Subtitles
     let mut subtitle_file: Option<PathBuf> = None;
-    if (cli.subtitles || cli.subtitles_only || cli.subs_embed) && !resolved.subtitle_urls.is_empty() {
+    if (cli.subtitles || cli.subtitles_only || cli.subs_embed) && !resolved.subtitle_urls.is_empty()
+    {
         let srt_path = target_file.with_extension("srt");
         println!("INFO: Downloading subtitles for {}", prog.pid);
         let sub_url = &resolved.subtitle_urls[0];
@@ -537,7 +617,9 @@ async fn download_programme(
                 let raw_path = target_file.with_extension("ttml");
                 let _ = std::fs::write(&raw_path, &xml);
             }
-            if let Ok(srt_content) = subtitles::SubtitleConverter::ttml_to_srt(&xml, cli.subs_mono, cli.suboffset) {
+            if let Ok(srt_content) =
+                subtitles::SubtitleConverter::ttml_to_srt(&xml, cli.subs_mono, cli.suboffset)
+            {
                 if std::fs::write(&srt_path, srt_content).is_ok() {
                     println!("INFO: Saved subtitles: {}", srt_path.display());
                     subtitle_file = Some(srt_path);
@@ -578,20 +660,32 @@ async fn download_programme(
 
     // Check if target file already exists
     if target_file.exists() && !cli.overwrite {
-        println!("INFO: Already exists: {}. Use --overwrite to re-download", target_file.display());
+        println!(
+            "INFO: Already exists: {}. Use --overwrite to re-download",
+            target_file.display()
+        );
         return Ok(());
     }
 
     // 8. Select best stream based on quality preferences
     if resolved.streams.is_empty() {
-        eprintln!("ERROR: No streams found for {} (version {})", prog.pid, selected_version);
+        eprintln!(
+            "ERROR: No streams found for {} (version {})",
+            prog.pid, selected_version
+        );
         return Ok(());
     }
 
     let quality_pref = if prog.prog_type == ProgrammeType::Tv {
-        cli.tv_quality.as_deref().or(cli.quality.as_deref()).unwrap_or("hd,sd,web,mobile")
+        cli.tv_quality
+            .as_deref()
+            .or(cli.quality.as_deref())
+            .unwrap_or("hd,sd,web,mobile")
     } else {
-        cli.radio_quality.as_deref().or(cli.quality.as_deref()).unwrap_or("high,std,med,low")
+        cli.radio_quality
+            .as_deref()
+            .or(cli.quality.as_deref())
+            .unwrap_or("high,std,med,low")
     };
 
     let target_qualities: Vec<Quality> = quality_pref
@@ -618,7 +712,10 @@ async fn download_programme(
     );
 
     if cli.test {
-        println!("INFO: Test mode - would record to: {}", target_file.display());
+        println!(
+            "INFO: Test mode - would record to: {}",
+            target_file.display()
+        );
         return Ok(());
     }
 
@@ -626,7 +723,16 @@ async fn download_programme(
     let tmp_ts = target_file.with_extension("tmp.ts");
     if stream.transfer_format == "hls" {
         println!("INFO: Downloading HLS stream to {}", tmp_ts.display());
-        downloader.hls.download(&stream.href, &tmp_ts, Some(&stream.quality), cli.tv_lower_bitrate, false).await?;
+        downloader
+            .hls
+            .download(
+                &stream.href,
+                &tmp_ts,
+                Some(&stream.quality),
+                cli.tv_lower_bitrate,
+                false,
+            )
+            .await?;
 
         if cli.raw {
             std::fs::rename(&tmp_ts, &target_file)?;
@@ -660,8 +766,16 @@ async fn download_programme(
             println!("INFO: Saved raw DASH tracks");
         } else {
             postproc.remux(
-                if a_track.is_some() { Some(&tmp_a) } else { None },
-                if v_track.is_some() { Some(&tmp_v) } else { None },
+                if a_track.is_some() {
+                    Some(&tmp_a)
+                } else {
+                    None
+                },
+                if v_track.is_some() {
+                    Some(&tmp_v)
+                } else {
+                    None
+                },
                 subtitle_file.as_deref(),
                 &target_file,
                 cli.subs_embed,
@@ -697,6 +811,10 @@ async fn download_programme(
         &selected_version,
     )?;
 
-    println!("INFO: Successfully recorded '{}' to {}", prog.name, target_file.display());
+    println!(
+        "INFO: Successfully recorded '{}' to {}",
+        prog.name,
+        target_file.display()
+    );
     Ok(())
 }

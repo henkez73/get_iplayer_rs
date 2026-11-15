@@ -80,7 +80,8 @@ impl SubtitleConverter {
                 }
                 Ok(Event::Text(ref e)) => {
                     if in_p {
-                        let text = htmlescape::decode_html(e.as_ref()).unwrap_or_else(|_| e.as_ref().to_string());
+                        let text = htmlescape::decode_html(e.as_ref())
+                            .unwrap_or_else(|_| e.as_ref().to_string());
                         current_text.push_str(&text);
                     }
                 }
@@ -100,7 +101,10 @@ impl SubtitleConverter {
                                 end_ms = end_ms.saturating_sub(abs);
                             }
 
-                            let color = current_style.as_ref().and_then(|s| style_colors.get(s)).cloned();
+                            let color = current_style
+                                .as_ref()
+                                .and_then(|s| style_colors.get(s))
+                                .cloned();
                             cues.push(SubtitleCue {
                                 start_ms,
                                 end_ms,
@@ -127,8 +131,17 @@ impl SubtitleConverter {
             srt.push('\n');
 
             let formatted_text = if mono {
-                let lines: Vec<&str> = cue.text.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
-                lines.iter().map(|l| format!("- {}", l)).collect::<Vec<_>>().join("\n")
+                let lines: Vec<&str> = cue
+                    .text
+                    .lines()
+                    .map(|l| l.trim())
+                    .filter(|l| !l.is_empty())
+                    .collect();
+                lines
+                    .iter()
+                    .map(|l| format!("- {}", l))
+                    .collect::<Vec<_>>()
+                    .join("\n")
             } else if let Some(ref col) = cue.color {
                 format!("<font color=\"{}\">{}</font>", col, cue.text)
             } else {
@@ -205,7 +218,9 @@ mod tests {
 </tt>"##;
 
         let srt = SubtitleConverter::ttml_to_srt(ttml, false, 0).unwrap();
-        assert!(srt.contains("1\n00:01:23,450 --> 00:01:26,780\n<font color=\"#ffff00\">Hello world!</font>"));
+        assert!(srt.contains(
+            "1\n00:01:23,450 --> 00:01:26,780\n<font color=\"#ffff00\">Hello world!</font>"
+        ));
         assert!(srt.contains("2\n00:01:27,000 --> 00:01:30,000\nGoodbye world!"));
 
         let srt_mono = SubtitleConverter::ttml_to_srt(ttml, true, 0).unwrap();

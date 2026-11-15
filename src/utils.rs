@@ -9,16 +9,42 @@ pub fn words_to_number(text: &str) -> Option<u32> {
     }
 
     let units: HashMap<&str, u32> = [
-        ("zero", 0), ("one", 1), ("two", 2), ("three", 3), ("four", 4),
-        ("five", 5), ("six", 6), ("seven", 7), ("eight", 8), ("nine", 9),
-        ("ten", 10), ("eleven", 11), ("twelve", 12), ("thirteen", 13), ("fourteen", 14),
-        ("fifteen", 15), ("sixteen", 16), ("seventeen", 17), ("eighteen", 18), ("nineteen", 19),
-    ].into_iter().collect();
+        ("zero", 0),
+        ("one", 1),
+        ("two", 2),
+        ("three", 3),
+        ("four", 4),
+        ("five", 5),
+        ("six", 6),
+        ("seven", 7),
+        ("eight", 8),
+        ("nine", 9),
+        ("ten", 10),
+        ("eleven", 11),
+        ("twelve", 12),
+        ("thirteen", 13),
+        ("fourteen", 14),
+        ("fifteen", 15),
+        ("sixteen", 16),
+        ("seventeen", 17),
+        ("eighteen", 18),
+        ("nineteen", 19),
+    ]
+    .into_iter()
+    .collect();
 
     let tens: HashMap<&str, u32> = [
-        ("twenty", 20), ("thirty", 30), ("forty", 40), ("fifty", 50),
-        ("sixty", 60), ("seventy", 70), ("eighty", 80), ("ninety", 90),
-    ].into_iter().collect();
+        ("twenty", 20),
+        ("thirty", 30),
+        ("forty", 40),
+        ("fifty", 50),
+        ("sixty", 60),
+        ("seventy", 70),
+        ("eighty", 80),
+        ("ninety", 90),
+    ]
+    .into_iter()
+    .collect();
 
     if let Some(&val) = units.get(text.as_str()) {
         return Some(val);
@@ -46,7 +72,11 @@ pub const REGEX_NUMBERS_PATTERN: &str = r"(?i)(\d+|zero|one|two|three|four|five|
 
 /// Extracts episode number from episode or synopsis string
 pub fn extract_episode_num(text: &str) -> Option<u32> {
-    let re1 = Regex::new(&format!(r"(?i)(?:Episode|Pennod)\s+{}", REGEX_NUMBERS_PATTERN)).ok()?;
+    let re1 = Regex::new(&format!(
+        r"(?i)(?:Episode|Pennod)\s+{}",
+        REGEX_NUMBERS_PATTERN
+    ))
+    .ok()?;
     if let Some(caps) = re1.captures(text) {
         if let Some(m) = caps.get(1) {
             if let Some(n) = words_to_number(m.as_str()) {
@@ -67,7 +97,11 @@ pub fn extract_episode_num(text: &str) -> Option<u32> {
 
 /// Extracts series number from series name or title string
 pub fn extract_series_num(text: &str) -> Option<u32> {
-    let re = Regex::new(&format!(r"(?i)(?:Series|Cyfres|Season)\s+{}", REGEX_NUMBERS_PATTERN)).ok()?;
+    let re = Regex::new(&format!(
+        r"(?i)(?:Series|Cyfres|Season)\s+{}",
+        REGEX_NUMBERS_PATTERN
+    ))
+    .ok()?;
     if let Some(caps) = re.captures(text) {
         if let Some(m) = caps.get(1) {
             if let Some(n) = words_to_number(m.as_str()) {
@@ -105,7 +139,8 @@ pub fn sanitize_filename(name: &str, keep_whitespace: bool) -> String {
     let s = re_underscores.replace_all(&s, "_");
     let re_spaces = Regex::new(r"[ \t]+").unwrap();
     let s = re_spaces.replace_all(&s, " ");
-    s.trim_matches(|c: char| c == ' ' || c == '-' || c == '_').to_string()
+    s.trim_matches(|c: char| c == ' ' || c == '-' || c == '_')
+        .to_string()
 }
 
 /// Check if an executable exists in the system PATH
@@ -195,7 +230,13 @@ mod tests {
 
     #[test]
     fn test_sanitize_filename() {
-        assert_eq!(sanitize_filename("Doctor Who: Series 7 / Part 2", false), "Doctor_Who-Series_7-Part_2");
-        assert_eq!(sanitize_filename("Doctor Who: Series 7 / Part 2", true), "Doctor Who-Series 7-Part 2");
+        assert_eq!(
+            sanitize_filename("Doctor Who: Series 7 / Part 2", false),
+            "Doctor_Who-Series_7-Part_2"
+        );
+        assert_eq!(
+            sanitize_filename("Doctor Who: Series 7 / Part 2", true),
+            "Doctor Who-Series 7-Part 2"
+        );
     }
 }

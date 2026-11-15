@@ -101,7 +101,8 @@ impl Indexer {
                 let progress_counter = Arc::clone(&progress_counter);
                 async move {
                     let res = client.get(&url).send().await;
-                    let count = progress_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    let count =
+                        progress_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                     if count.is_multiple_of(20) || count == total_urls {
                         print!(".");
                         use std::io::Write;
@@ -111,7 +112,14 @@ impl Indexer {
                     if let Ok(resp) = res {
                         if resp.status().is_success() {
                             if let Ok(body) = resp.text().await {
-                                let programmes = Self::parse_schedule_page(&body, channel_name, p_type, future, min_available, now);
+                                let programmes = Self::parse_schedule_page(
+                                    &body,
+                                    channel_name,
+                                    p_type,
+                                    future,
+                                    min_available,
+                                    now,
+                                );
                                 if !programmes.is_empty() {
                                     let mut disc = discovered.lock().await;
                                     for p in programmes {
@@ -160,7 +168,11 @@ impl Indexer {
 
         // Sort and reindex
         cache.sort_and_reindex(prog_type.index_min());
-        println!("INFO: Added {} {} programmes to cache", added_count, prog_type.as_str());
+        println!(
+            "INFO: Added {} {} programmes to cache",
+            added_count,
+            prog_type.as_str()
+        );
 
         Ok(added_count)
     }
@@ -178,13 +190,21 @@ impl Indexer {
         let cache_channel = channels::collapse_channel_name(channel, prog_type);
 
         // 1. Try parsing JSON-LD script tags
-        let re_script = Regex::new(r#"(?s)<script\s+type="application/ld\+json">(\{.*?\})</script>"#).unwrap();
+        let re_script =
+            Regex::new(r#"(?s)<script\s+type="application/ld\+json">(\{.*?\})</script>"#).unwrap();
         for cap in re_script.captures_iter(html) {
             if let Some(json_str) = cap.get(1) {
                 if let Ok(val) = serde_json::from_str::<Value>(json_str.as_str()) {
                     if let Some(graph) = val.get("@graph").and_then(|g| g.as_array()) {
                         for item in graph {
-                            if let Some(p) = Self::parse_json_ld_entry(item, &cache_channel, prog_type, future, min_available, now) {
+                            if let Some(p) = Self::parse_json_ld_entry(
+                                item,
+                                &cache_channel,
+                                prog_type,
+                                future,
+                                min_available,
+                                now,
+                            ) {
                                 results.push(p);
                             }
                         }
@@ -198,12 +218,17 @@ impl Indexer {
         }
 
         // 2. Fallback: Parse HTML items
-        let re_item = Regex::new(r#"(?s)<li[^>]*class="[^"]*week-guide__table__item[^"]*"[^>]*>(.*?)</li>"#).unwrap();
+        let re_item =
+            Regex::new(r#"(?s)<li[^>]*class="[^"]*week-guide__table__item[^"]*"[^>]*>(.*?)</li>"#)
+                .unwrap();
         let re_pid = Regex::new(r#"data-pid="([a-zA-Z0-9]{8,})""#).unwrap();
-        let re_start = Regex::new(r#"class="[^"]*broadcast__time[^"]*"[^>]*content="([^"]+)""#).unwrap();
+        let re_start =
+            Regex::new(r#"class="[^"]*broadcast__time[^"]*"[^>]*content="([^"]+)""#).unwrap();
         let re_end = Regex::new(r#"property="endDate"[^>]*content="([^"]+)""#).unwrap();
-        let re_title = Regex::new(r#"(?s)<span[^>]*class="programme__title[^"]*"[^>]*>(.*?)</span>"#).unwrap();
-        let re_desc = Regex::new(r#"(?s)<p[^>]*class="programme__synopsis[^"]*"[^>]*>(.*?)</p>"#).unwrap();
+        let re_title =
+            Regex::new(r#"(?s)<span[^>]*class="programme__title[^"]*"[^>]*>(.*?)</span>"#).unwrap();
+        let re_desc =
+            Regex::new(r#"(?s)<p[^>]*class="programme__synopsis[^"]*"[^>]*>(.*?)</p>"#).unwrap();
         let re_strip_html = Regex::new(r#"<[^>]*>"#).unwrap();
 
         for cap in re_item.captures_iter(html) {
@@ -213,8 +238,16 @@ impl Indexer {
                 None => continue,
             };
 
-            let start_str = re_start.captures(item_html).and_then(|c| c.get(1)).map(|m| m.as_str().to_string()).unwrap_or_default();
-            let end_str = re_end.captures(item_html).and_then(|c| c.get(1)).map(|m| m.as_str().to_string()).unwrap_or_default();
+            let start_str = re_start
+                .captures(item_html)
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_default();
+            let end_str = re_end
+                .captures(item_html)
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_default();
 
             let start_time = chrono::DateTime::parse_from_rfc3339(&start_str)
                 .map(|dt| dt.timestamp())
@@ -233,12 +266,30 @@ impl Indexer {
                 continue;
             }
 
-            let duration = if end_time > start_time { (end_time - start_time) as u32 } else { 0 };
-            let raw_title = re_title.captures(item_html).and_then(|c| c.get(1)).map(|m| m.as_str()).unwrap_or("");
-            let raw_desc = re_desc.captures(item_html).and_then(|c| c.get(1)).map(|m| m.as_str()).unwrap_or("");
+            let duration = if end_time > start_time {
+                (end_time - start_time) as u32
+            } else {
+                0
+            };
+            let raw_title = re_title
+                .captures(item_html)
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str())
+                .unwrap_or("");
+            let raw_desc = re_desc
+                .captures(item_html)
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str())
+                .unwrap_or("");
 
-            let clean_title = htmlescape::decode_html(&re_strip_html.replace_all(raw_title, "")).unwrap_or_default().trim().to_string();
-            let clean_desc = htmlescape::decode_html(&re_strip_html.replace_all(raw_desc, "")).unwrap_or_default().trim().to_string();
+            let clean_title = htmlescape::decode_html(&re_strip_html.replace_all(raw_title, ""))
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            let clean_desc = htmlescape::decode_html(&re_strip_html.replace_all(raw_desc, ""))
+                .unwrap_or_default()
+                .trim()
+                .to_string();
 
             let (name, episode) = if let Some((n, e)) = clean_title.split_once(':') {
                 (n.trim().to_string(), e.trim().to_string())
@@ -246,7 +297,8 @@ impl Indexer {
                 (clean_title, "-".to_string())
             };
 
-            let episodenum = extract_episode_num(&episode).or_else(|| extract_episode_num(&clean_desc));
+            let episodenum =
+                extract_episode_num(&episode).or_else(|| extract_episode_num(&clean_desc));
             let seriesnum = extract_series_num(&format!("{} {}", name, episode));
 
             results.push(Programme {
@@ -283,7 +335,10 @@ impl Indexer {
         let pid = entry.get("identifier")?.as_str()?.to_string();
         let pub_info = entry.get("publication")?;
         let start_str = pub_info.get("startDate")?.as_str()?.to_string();
-        let end_str = pub_info.get("endDate").and_then(|e| e.as_str()).unwrap_or("");
+        let end_str = pub_info
+            .get("endDate")
+            .and_then(|e| e.as_str())
+            .unwrap_or("");
 
         let start_time = chrono::DateTime::parse_from_rfc3339(&start_str)
             .map(|dt| dt.timestamp())
@@ -302,10 +357,17 @@ impl Indexer {
             return None;
         }
 
-        let duration = if end_time > start_time { (end_time - start_time) as u32 } else { 0 };
+        let duration = if end_time > start_time {
+            (end_time - start_time) as u32
+        } else {
+            0
+        };
 
         let raw_name = entry.get("name").and_then(|n| n.as_str()).unwrap_or("");
-        let raw_desc = entry.get("description").and_then(|d| d.as_str()).unwrap_or("");
+        let raw_desc = entry
+            .get("description")
+            .and_then(|d| d.as_str())
+            .unwrap_or("");
 
         let clean_name = htmlescape::decode_html(raw_name).unwrap_or_else(|_| raw_name.to_string());
         let clean_desc = htmlescape::decode_html(raw_desc).unwrap_or_else(|_| raw_desc.to_string());

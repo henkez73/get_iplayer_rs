@@ -1,0 +1,118 @@
+name: GUI Release Automation
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'get_iplayer_rs_gui/**'
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/gui-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x86_64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - architecture: aarch64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install GUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            libasound2-dev \
+            libfontconfig1-dev \
+            libwayland-dev \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev
+
+      - name: Add Linux build target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-${{ matrix.architecture }}-gui-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-${{ matrix.architecture }}-gui-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build GUI binary
+        run: cargo build --release --locked --package get_iplayer_rs_gui --bin get_iplayer_rs_gui --target ${{ matrix.target }}
+
+      - name: Create release assets
+        run: |
+          mkdir -p release-assets
+          cp target/${{ matrix.target }}/release/get_iplayer_rs_gui release-assets/get_iplayer_rs_gui-${{ matrix.architecture }}-linux
+          cd release-assets
+          sha256sum get_iplayer_rs_gui-${{ matrix.architecture }}-linux > SHA256SUMS-gui-${{ matrix.architecture }}
+
+      - name: Upload architecture assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-release-${{ matrix.architecture }}
+          path: release-assets/*
+          if-no-files-found: error
+
+  release:
+    runs-on: ubuntu-24.04
+    needs: build
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download architecture assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: gui-release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Read GUI version
+        id: version
+        run: |
+          VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("get_iplayer_rs_gui/Cargo.toml", "rb"))["package"]["version"])')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create GUI release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: gui-v${{ steps.version.outputs.version }}
+          name: GUI Release ${{ steps.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          draft: false
+          prerelease: false
+          files: |
+            release-assets/get_iplayer_rs_gui-x86_64-linux
+            release-assets/SHA256SUMS-gui-x86_64
+            release-assets/get_iplayer_rs_gui-aarch64-linux
+            release-assets/SHA256SUMS-gui-aarch64

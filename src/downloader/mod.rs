@@ -1,5 +1,6 @@
 pub mod dash;
 pub mod hls;
+pub mod pipeline;
 
 use dash::DashDownloader;
 use hls::HlsDownloader;
@@ -46,7 +47,10 @@ impl Downloader {
     }
 
     /// Fetches text content from URL (for playlists, manifests, etc.)
-    pub async fn get_text(&self, url: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn get_text(
+        &self,
+        url: &str,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let resp = self.client.get(url).send().await?;
         let text = resp.text().await?;
         Ok(text)

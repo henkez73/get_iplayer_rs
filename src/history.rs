@@ -27,9 +27,23 @@ impl History {
         if let Ok(file) = File::open(&self.file_path) {
             let reader = BufReader::new(file);
             let cols = [
-                "pid", "name", "episode", "type", "timeadded", "mode", "filename",
-                "versions", "duration", "desc", "channel", "categories", "thumbnail",
-                "guidance", "web", "episodenum", "seriesnum",
+                "pid",
+                "name",
+                "episode",
+                "type",
+                "timeadded",
+                "mode",
+                "filename",
+                "versions",
+                "duration",
+                "desc",
+                "channel",
+                "categories",
+                "thumbnail",
+                "guidance",
+                "web",
+                "episodenum",
+                "seriesnum",
             ];
 
             for line in reader.lines().map_while(Result::ok) {
@@ -56,11 +70,17 @@ impl History {
                     name: map.get("name").unwrap_or(&"").to_string(),
                     episode: map.get("episode").unwrap_or(&"").to_string(),
                     prog_type: map.get("type").unwrap_or(&"").to_string(),
-                    timeadded: map.get("timeadded").and_then(|s| s.parse().ok()).unwrap_or(0),
+                    timeadded: map
+                        .get("timeadded")
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0),
                     mode: map.get("mode").unwrap_or(&"").to_string(),
                     filename: map.get("filename").unwrap_or(&"").to_string(),
                     versions: map.get("versions").unwrap_or(&"").to_string(),
-                    duration: map.get("duration").and_then(|s| s.parse().ok()).unwrap_or(0),
+                    duration: map
+                        .get("duration")
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0),
                     desc: map.get("desc").unwrap_or(&"").to_string(),
                     channel: map.get("channel").unwrap_or(&"").to_string(),
                     categories: map.get("categories").unwrap_or(&"").to_string(),
@@ -105,7 +125,10 @@ impl History {
             filename.replace('|', "-"),
             version,
             prog.duration,
-            prog.desc.replace('|', "-").replace('\n', " ").replace('\r', ""),
+            prog.desc
+                .replace('|', "-")
+                .replace('\n', " ")
+                .replace('\r', ""),
             prog.channel.replace('|', "-"),
             prog.categories.replace('|', "-"),
             prog.thumbnail,
@@ -142,15 +165,26 @@ impl History {
     pub fn search(&self, terms: &[String]) -> Vec<&HistoryEntry> {
         let regexes: Vec<regex::Regex> = terms
             .iter()
-            .filter_map(|t| regex::RegexBuilder::new(t).case_insensitive(true).build().ok())
+            .filter_map(|t| {
+                regex::RegexBuilder::new(t)
+                    .case_insensitive(true)
+                    .build()
+                    .ok()
+            })
             .collect();
 
-        let mut results: Vec<&HistoryEntry> = self.records.values().filter(|e| {
-            if regexes.is_empty() {
-                return true;
-            }
-            regexes.iter().all(|r| r.is_match(&e.name) || r.is_match(&e.episode) || r.is_match(&e.pid))
-        }).collect();
+        let mut results: Vec<&HistoryEntry> = self
+            .records
+            .values()
+            .filter(|e| {
+                if regexes.is_empty() {
+                    return true;
+                }
+                regexes
+                    .iter()
+                    .all(|r| r.is_match(&e.name) || r.is_match(&e.episode) || r.is_match(&e.pid))
+            })
+            .collect();
 
         results.sort_by_key(|e| e.timeadded);
         results
