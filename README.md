@@ -1,119 +1,93 @@
-# get_iplayer_rs Rust Implementation
+# get_iplayer_rs
 
-A Rust rewrite of the popular BBC iPlayer and BBC Sounds downloader tool with enhanced performance and security.
-
-## Overview
-
-This project is a complete rewrite of the get_iplayer tool in Rust, providing:
-- Faster performance due to Rust's compilation and memory safety
-- Enhanced security with non-root execution and minimal attack surface
-- Multi-architecture support (AMD64 and ARM64)
+A Rust application for searching and recording TV and radio programmes from BBC iPlayer and BBC Sounds. The repository contains a command-line application (CLI) and a separate graphical application (GUI); both use the same core library and profile data.
 
 ## Features
 
-- Download BBC iPlayer TV and BBC Sounds radio programmes
-- Search and record programmes with advanced filtering options
-- Support for PVR (Personal Video Recorder) functionality
-- Subtitle and thumbnail download capabilities
-- Metadata tagging support
-- Cache management for improved performance
-- Multi-architecture support
+- Search BBC iPlayer TV and BBC Sounds radio listings, including programme descriptions and episode details.
+- Record programmes, download subtitles and thumbnails, and tag media metadata.
+- Manage download history, saved PVR searches, and programme caches.
+- Use either the CLI or the GUI.
+- Download Linux x86-64 (AMD64) and ARM64 release binaries for both applications.
 
-## Building
+## Requirements
 
-### Prerequisites
-- Rust 1.99 or later
-- Cargo (comes with Rust)
+- Stable Rust and Cargo for building from source.
+- FFmpeg for media processing and AtomicParsley for MP4 metadata tagging.
 
-### Build Steps
-```bash
-# Clone the repository
-git clone https://github.com/your-username/get_iplayer_rs.git
-cd get_iplayer_rs
+## Build and run the CLI
 
-# Build the project
-cargo build --release
-
-# The binary will be located at:
-# target/release/get_iplayer_rs
+```sh
+cargo build --release --package get_iplayer_rs --bin get_iplayer_rs
+cargo run --package get_iplayer_rs -- --help
 ```
 
-## Automated Releases
+The release binary is `target/release/get_iplayer_rs`.
 
-Releases are automatically created when code is pushed to the main branch. These releases include:
-- Semantic versioned binaries for Linux x86_64 and ARM64 architectures
-- SHA256 checksums for verification
-- GitHub release assets with proper version tags
+Examples:
 
-## Docker Usage
-
-### Build the image
-```bash
-# Build for current architecture
-docker build -t henkez/get_iplayer_rs:test .
-
-# Build for both AMD64 and ARM64 architectures
-docker buildx build --platform linux/amd64,linux/arm64 -t get_iplayer_rs:latest --push .
-```
-
-### Run the container
-```bash
-# Basic usage
-docker run --rm henkez/get_iplayer_rs:test --help
-
-# Download a programme
-docker run -v $(pwd)/cache:/app/cache -v $(pwd)/config:/app/config get_iplayer_rs "programme search term"
-
-# With output directory
-docker run -v $(pwd)/cache:/app/cache -v $(pwd)/config:/app/config -v $(pwd)/output:/app/output get_iplayer_rs --output-dir=/app/output "programme search term"
-```
-
-### Volume Mounts
-- `/app/cache`: Cache directory for storing programme information
-- `/app/config`: Configuration directory for user preferences
-
-## Usage Examples
-
-```bash
-# Search for programmes
+```sh
+# Search the programme cache
 get_iplayer_rs "Doctor Who"
 
-# Download programmes
+# Show matching programme details
+get_iplayer_rs --info "Doctor Who"
+
+# Record matching programmes
 get_iplayer_rs --get "Doctor Who"
 
-# List available programmes
-get_iplayer_rs --list "Doctor Who"
-
-# Show help
-get_iplayer_rs --help
+# Refresh the TV and radio programme caches
+get_iplayer_rs --refresh --type all
 ```
 
-## Project Structure
+See `get_iplayer_rs --help` for all search, recording, PVR, cache, and output options.
 
-```
-get_iplayer_rs/
-├── src/
-│   ├── main.rs          # Entry point and command line interface
-│   ├── bbc_api.rs       # BBC API integration
-│   ├── cache.rs         # Cache management
-│   ├── channels.rs      # Channel information
-│   ├── cli.rs           # Command line argument parsing
-│   ├── config.rs        # Configuration management
-│   ├── downloader/      # Media downloading functionality
-│   ├── history.rs       # Download history
-│   ├── indexer.rs       # Programme indexer
-│   ├── mediaselector.rs # Media stream selection
-│   ├── models.rs        # Data models
-│   ├── postproc.rs      # Post-processing
-│   ├── pVR.rs           # PVR functionality
-│   ├── search.rs        # Search functionality
-│   ├── subtitles.rs     # Subtitle handling
-│   ├── tagger.rs        # Metadata tagging
-│   └── utils.rs         # Utility functions
-├── Cargo.toml           # Rust dependencies
-└── README.md            # This file
+## GUI
+
+See [get_iplayer_rs_gui/README.md](get_iplayer_rs_gui/README.md) for GUI build instructions and features.
+
+## Releases and versioning
+
+The CLI and GUI have independent versions:
+
+- The CLI version is in the root `Cargo.toml`. Its GitHub releases use tags in the form `v<version>`.
+- The GUI version is in `get_iplayer_rs_gui/Cargo.toml`. Its GitHub releases use tags in the form `gui-v<version>`.
+
+Each release includes Linux x86-64 and ARM64 binaries and SHA-256 checksum files. Releases are built from pushes to `main`; both release workflows can also be started manually from GitHub Actions.
+
+## Docker
+
+Build an image for the current architecture:
+
+```sh
+docker build -t henkez/get_iplayer_rs:latest .
 ```
 
-## License
+Build and publish a multi-architecture image:
 
-This project is licensed under the GPL-3.0-or-later License - see the LICENSE.txt file for details.
+```sh
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  --tag henkez/get_iplayer_rs:latest \
+  --push .
+```
+
+Run the CLI with persistent profile data and recordings:
+
+```sh
+mkdir -p config output
+docker run --rm \
+  -v "$PWD/config:/data/config" \
+  -v "$PWD/output:/data/output" \
+  henkez/get_iplayer_rs:latest "Doctor Who"
+```
+
+The container stores its shared configuration and cache under `/data/config` and recordings under `/data/output`.
+
+## Security checks
+
+GitHub Actions scans the repository for verified secrets, audits the Cargo dependency lockfile, and runs Clippy. The GUI has an additional Clippy job with the Linux GUI build dependencies installed.
+
+## Licence
+
+The code is licensed under [GPL-3.0-or-later](LICENSE.txt).
