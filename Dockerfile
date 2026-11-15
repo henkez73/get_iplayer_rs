@@ -1,5 +1,5 @@
 # Multi-stage build for minimal and secure Docker image
-FROM rust:1.99-alpine AS builder
+FROM rust:1.100-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache musl-dev
