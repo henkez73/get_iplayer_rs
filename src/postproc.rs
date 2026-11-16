@@ -51,10 +51,13 @@ impl PostProcessor {
         }
 
         // File prefix
-        let prefix_fmt = options
-            .file_prefix
-            .unwrap_or("<name> - <episode> <pid> <version>");
-        let prefix = substitute_template(prefix_fmt, &vars);
+        let prefix = if let Some(file_prefix) = options.file_prefix {
+            substitute_template(file_prefix, &vars)
+        } else if let (Some(series), Some(episode)) = (prog.seriesnum, prog.episodenum) {
+            format!("{}.S{series:02}E{episode:02}", prog.name)
+        } else {
+            substitute_template("<name> - <episode> <pid> <version>", &vars)
+        };
         let clean_prefix = sanitize_filename(&prefix, options.keep_whitespace);
 
         let final_filename = format!("{}.{}", clean_prefix, ext);
@@ -162,5 +165,70 @@ impl PostProcessor {
         {
             let _ = Command::new("cmd").arg("/C").arg(&command_str).status();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{Programme, ProgrammeType};
+
+    #[test]
+    fn defaults_to_show_and_padded_season_episode_for_numbered_programmes() {
+        let programme = Programme {
+            name: "Not Going Out".to_string(),
+            seriesnum: Some(1),
+            episodenum: Some(2),
+            ..Default::default()
+        };
+        let options = OutputPathOptions {
+            base_output_dir: Path::new("recordings"),
+            use_subdir: false,
+            subdir_format: None,
+            file_prefix: None,
+            keep_whitespace: false,
+        };
+
+        let (_, path) = PostProcessor::generate_paths(&programme, "default", "mp4", &options);
+        assert_eq!(path, Path::new("recordings/Not_Going_Out.S01E02.mp4"));
+        assert_eq!(
+            path.with_extension("srt"),
+            Path::new("recordings/Not_Going_Out.S01E02.srt")
+        );
+        assert_eq!(
+            path.with_extension("jpg"),
+            Path::new("recordings/Not_Going_Out.S01E02.jpg")
+        );
+    }
+
+    #[test]
+    fn keeps_custom_file_prefix_and_legacy_fallback_for_un_numbered_programmes() {
+        let programme = Programme {
+            prog_type: ProgrammeType::Tv,
+            name: "A Show".to_string(),
+            episode: "A Special".to_string(),
+            pid: "b1234567".to_string(),
+            ..Default::default()
+        };
+        let options = OutputPathOptions {
+            base_output_dir: Path::new("recordings"),
+            use_subdir: false,
+            subdir_format: None,
+            file_prefix: None,
+            keep_whitespace: false,
+        };
+        let (_, path) = PostProcessor::generate_paths(&programme, "default", "mp4", &options);
+        assert_eq!(
+            path,
+            Path::new("recordings/A_Show-A_Special_b1234567_default.mp4")
+        );
+
+        let custom_options = OutputPathOptions {
+            file_prefix: Some("<name>.<pid>"),
+            ..options
+        };
+        let (_, custom_path) =
+            PostProcessor::generate_paths(&programme, "default", "mp4", &custom_options);
+        assert_eq!(custom_path, Path::new("recordings/A_Show.b1234567.mp4"));
     }
 }

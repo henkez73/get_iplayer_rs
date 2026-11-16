@@ -9,6 +9,8 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/gui-release.yml'
+      - "!*.md"
+      - "!**/*.md"
   workflow_dispatch:
 
 permissions:

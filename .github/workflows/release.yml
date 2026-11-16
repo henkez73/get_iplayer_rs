@@ -5,8 +5,13 @@ on:
     branches: [ main ]
     paths-ignore:
       - '.github/workflows/**'
+      - '*.md'
+      - '**/*.md'
   pull_request:
     branches: [ main ]
+    paths-ignore:
+      - '*.md'
+      - '**/*.md'
   workflow_dispatch:
     inputs:
       debug_enabled:

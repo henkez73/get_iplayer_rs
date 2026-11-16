@@ -277,7 +277,7 @@ pub struct Cli {
     #[arg(long = "output-radio")]
     pub output_radio: Option<String>,
 
-    /// Filename prefix template (default: <name> - <episode> <pid> <version>)
+    /// Filename prefix template (default for numbered programmes: <name>.S<series>E<episode>)
     #[arg(long = "file-prefix")]
     pub file_prefix: Option<String>,
 

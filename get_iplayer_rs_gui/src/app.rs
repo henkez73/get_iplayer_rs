@@ -103,6 +103,8 @@ pub struct MyApp {
     cache_status: String,
     cache_refresh_rx: Option<mpsc::Receiver<Result<(Cache, Cache), String>>>,
     next_cache_refresh_check: Instant,
+    archive_loading: bool,
+    archive_refresh_rx: Option<mpsc::Receiver<Result<Vec<Programme>, String>>>,
 
     // History
     history: History,
@@ -199,6 +201,8 @@ impl MyApp {
             cache_status,
             cache_refresh_rx: None,
             next_cache_refresh_check: Instant::now() + CACHE_MAX_AGE,
+            archive_loading: false,
+            archive_refresh_rx: None,
             history,
             search_query: String::new(),
             search_prog_type: ProgrammeType::Tv,
@@ -258,7 +262,12 @@ impl MyApp {
 
         let matches =
             Searcher::find_matches(&filter, &self.tv_cache, &self.radio_cache, &self.history);
-        self.search_results = matches.into_iter().cloned().collect();
+        let now = chrono::Utc::now().timestamp();
+        self.search_results = matches
+            .into_iter()
+            .filter(|programme| is_not_expired(programme, now))
+            .cloned()
+            .collect();
         self.selected_episode_pids.clear();
         self.status_message = format!("Found {} programmes", self.search_results.len());
         self.selected_prog = None;
@@ -350,6 +359,102 @@ impl MyApp {
                 self.status_message = "Cache refresh failed: background task stopped".to_string();
                 self.cache_loading = false;
                 self.cache_refresh_rx = None;
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+        }
+    }
+
+    fn load_series_archive(&mut self, programme: &Programme) {
+        if self.archive_loading || programme.prog_type != ProgrammeType::Tv {
+            return;
+        }
+        self.archive_loading = true;
+        self.status_message = format!("Loading available series for {} from BBC…", programme.name);
+        let seed = programme.clone();
+        let (tx, rx) = mpsc::channel();
+        self.archive_refresh_rx = Some(rx);
+        std::thread::spawn(move || {
+            let result = Runtime::new()
+                .map_err(|error| error.to_string())
+                .and_then(|runtime| {
+                    runtime
+                        .block_on(BbcApi::new().get_series_archive(&seed))
+                        .map_err(|error| error.to_string())
+                });
+            let _ = tx.send(result);
+        });
+    }
+
+    fn poll_series_archive(&mut self) {
+        let Some(receiver) = &self.archive_refresh_rx else {
+            return;
+        };
+        match receiver.try_recv() {
+            Ok(Ok(programmes)) => {
+                let selected_pid = self
+                    .selected_prog
+                    .as_ref()
+                    .map(|programme| programme.pid.clone());
+                let count = programmes.len();
+                for programme in programmes {
+                    if let Some(&index) = self.tv_cache.by_pid.get(&programme.pid) {
+                        let existing = &mut self.tv_cache.programmes[index];
+                        existing.seriesnum = programme.seriesnum.or(existing.seriesnum);
+                        existing.episodenum = programme.episodenum.or(existing.episodenum);
+                        if !programme.episode.is_empty() {
+                            existing.episode = programme.episode;
+                        }
+                        if !programme.desc.is_empty() {
+                            existing.desc = programme.desc;
+                        }
+                        if !programme.available.is_empty() {
+                            existing.available = programme.available;
+                        }
+                        existing.expires = programme.expires;
+                        if !programme.channel.is_empty() {
+                            existing.channel = programme.channel;
+                        }
+                        if programme.duration > 0 {
+                            existing.duration = programme.duration;
+                        }
+                        if !programme.thumbnail.is_empty() {
+                            existing.thumbnail = programme.thumbnail;
+                        }
+                        existing.web = programme.web;
+                    } else {
+                        self.tv_cache.programmes.push(programme);
+                    }
+                }
+                self.tv_cache
+                    .sort_and_reindex(ProgrammeType::Tv.index_min());
+                let save_result = self.tv_cache.save_file(self.config.cache_file("tv"));
+                self.archive_loading = false;
+                self.archive_refresh_rx = None;
+                if let Err(error) = save_result {
+                    self.status_message =
+                        format!("Series loaded, but cache could not be saved: {error}");
+                } else {
+                    self.status_message = format!("Loaded {count} available episodes from BBC");
+                }
+                self.run_search();
+                if let Some(pid) = selected_pid {
+                    self.selected_prog = self
+                        .tv_cache
+                        .by_pid
+                        .get(&pid)
+                        .map(|&index| self.tv_cache.programmes[index].clone());
+                }
+            }
+            Ok(Err(error)) => {
+                self.status_message = format!("Could not load BBC series: {error}");
+                self.archive_loading = false;
+                self.archive_refresh_rx = None;
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.status_message =
+                    "Could not load BBC series: background task stopped".to_string();
+                self.archive_loading = false;
+                self.archive_refresh_rx = None;
             }
             Err(mpsc::TryRecvError::Empty) => {}
         }
@@ -642,16 +747,12 @@ impl MyApp {
         let show_info = self.selected_prog.is_some();
         let available_width = ui.available_width();
         let available_height = ui.available_height();
-        let list_width = if show_info {
-            available_width * 0.55
-        } else {
-            available_width
-        };
+        let (list_width, info_width) = search_panel_widths(available_width, show_info);
 
         ui.horizontal(|ui| {
             // Results list
             ui.vertical(|ui| {
-                ui.set_width(list_width);
+                ui.set_width(list_width.max(0.0));
                 ui.set_height(available_height);
                 egui::ScrollArea::vertical()
                     .id_salt("results_scroll")
@@ -669,6 +770,7 @@ impl MyApp {
                                 group_search_results(&results_clone, self.search_newest_first);
                             let mut to_download: Option<Programme> = None;
                             let mut to_download_batch: Option<Vec<Programme>> = None;
+                            let mut to_load_archive: Option<Programme> = None;
                             let mut to_select: Option<Programme> = None;
                             ui.horizontal(|ui| {
                                 let selected_count = self.selected_episode_pids.len();
@@ -719,6 +821,21 @@ impl MyApp {
                                 .default_open(true)
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
+                                        if show_episodes.first().is_some_and(|episode| {
+                                            episode.prog_type == ProgrammeType::Tv
+                                        }) && ui
+                                            .add_enabled(
+                                                !self.archive_loading,
+                                                egui::Button::new(if self.archive_loading {
+                                                    "Loading available episodes…"
+                                                } else {
+                                                    "Load all available episodes"
+                                                }),
+                                            )
+                                            .clicked()
+                                        {
+                                            to_load_archive = show_episodes.first().cloned();
+                                        }
                                         if ui.small_button("Download series").clicked() {
                                             to_download_batch = Some(show_episodes.clone());
                                         }
@@ -847,6 +964,9 @@ impl MyApp {
                             if let Some(batch) = to_download_batch {
                                 self.enqueue_episodes(batch);
                             }
+                            if let Some(programme) = to_load_archive {
+                                self.load_series_archive(&programme);
+                            }
                             if let Some(p) = to_select {
                                 let already_selected = self
                                     .selected_prog
@@ -868,7 +988,7 @@ impl MyApp {
                 let available_episodes = self.episodes_for_show(prog);
                 ui.separator();
                 ui.vertical(|ui| {
-                    ui.set_width(available_width - list_width - 8.0);
+                    ui.set_width(info_width);
                     ui.heading(RichText::new(&prog.name).size(15.0));
 
                     if !prog.episode.is_empty() && prog.episode != prog.name {
@@ -900,12 +1020,10 @@ impl MyApp {
                             ui.label(&prog.available);
                         });
                     }
-                    if let Some(s) = prog.seriesnum {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("Series:").strong());
-                            ui.label(format!("{}", s));
-                        });
-                    }
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Series:").strong());
+                        ui.label(series_label(prog.seriesnum));
+                    });
                     if let Some(e) = prog.episodenum {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Episode:").strong());
@@ -955,18 +1073,18 @@ impl MyApp {
                                         .cloned()
                                         .collect();
                                     ui.horizontal(|ui| {
-                                        let label = season
-                                            .map(|n| {
-                                                format!(
-                                                    "Series {n} ({} episodes)",
-                                                    season_episodes.len()
-                                                )
-                                            })
-                                            .unwrap_or_else(|| {
-                                                format!("Episodes ({})", season_episodes.len())
-                                            });
+                                        let label = format!(
+                                            "{} ({} episodes)",
+                                            series_label(season),
+                                            season_episodes.len()
+                                        );
                                         ui.label(label);
-                                        if ui.small_button("Download").clicked() {
+                                        let download_label = if season.is_some() {
+                                            "Download series"
+                                        } else {
+                                            "Download episodes"
+                                        };
+                                        if ui.small_button(download_label).clicked() {
                                             self.enqueue_episodes(season_episodes);
                                         }
                                     });
@@ -1206,7 +1324,7 @@ impl MyApp {
                             .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                             .rounding(4.0)
                             .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
+                                ui.set_width(ui.available_width().max(0.0));
                                 ui.horizontal(|ui| {
                                     ui.label(
                                         RichText::new(status_icon).color(status_color).size(14.0),
@@ -1312,7 +1430,7 @@ impl MyApp {
             .show(ui, |ui| {
                 for entry in entries.iter().rev() {
                     ui.horizontal(|ui| {
-                        ui.set_width(ui.available_width());
+                        ui.set_width(ui.available_width().max(0.0));
                         ui.label(RichText::new(&entry.name).strong().size(12.0));
                         if !entry.episode.is_empty() && entry.episode != entry.name {
                             ui.label(
@@ -1591,6 +1709,7 @@ impl MyApp {
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_cache_refresh();
+        self.poll_series_archive();
         self.poll_film_catalogue();
         if Instant::now() >= self.next_cache_refresh_check {
             self.next_cache_refresh_check = Instant::now() + CACHE_MAX_AGE;
@@ -1598,7 +1717,7 @@ impl eframe::App for MyApp {
                 self.refresh_cache(ProgrammeType::All, 7);
             }
         }
-        if self.cache_loading || self.film_loading {
+        if self.cache_loading || self.film_loading || self.archive_loading {
             ctx.request_repaint_after(Duration::from_millis(100));
         } else {
             ctx.request_repaint_after(
@@ -1650,6 +1769,16 @@ fn format_duration(secs: u32) -> String {
     }
 }
 
+fn search_panel_widths(available_width: f32, show_info: bool) -> (f32, f32) {
+    let available_width = available_width.max(0.0);
+    if show_info {
+        let list_width = available_width * 0.55;
+        (list_width, (available_width - list_width - 8.0).max(0.0))
+    } else {
+        (available_width, 0.0)
+    }
+}
+
 fn format_epoch(ts: i64) -> String {
     use chrono::{DateTime, Utc};
     let dt = DateTime::<Utc>::from_timestamp(ts, 0).unwrap_or_default();
@@ -1674,7 +1803,7 @@ fn available_episodes_for_show(
         .filter(|episode| {
             episode.prog_type == selected.prog_type
                 && episode.name.eq_ignore_ascii_case(&selected.name)
-                && (episode.expires == 0 || episode.expires > now)
+                && is_not_expired(episode, now)
         })
         .cloned()
         .collect();
@@ -1686,6 +1815,16 @@ fn available_episodes_for_show(
             .then_with(|| a.episode.cmp(&b.episode))
     });
     episodes
+}
+
+fn is_not_expired(programme: &Programme, now: i64) -> bool {
+    programme.expires == 0 || programme.expires > now
+}
+
+fn series_label(seriesnum: Option<u32>) -> String {
+    seriesnum
+        .map(|number| format!("Series {number}"))
+        .unwrap_or_else(|| "Series not specified".to_string())
 }
 
 fn episode_display_title(episode: &Programme) -> String {
@@ -1871,9 +2010,7 @@ fn group_search_results(results: &[Programme], newest_first: bool) -> Vec<Search
                             .then_with(|| a.index.cmp(&b.index))
                     });
                     SearchSeasonGroup {
-                        label: number
-                            .map(|number| format!("Series {number}"))
-                            .unwrap_or_else(|| "Episodes".to_string()),
+                        label: series_label(number),
                         episodes,
                     }
                 })
@@ -1941,6 +2078,47 @@ fn open_url(url: &str) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn narrow_search_layout_never_produces_negative_widths() {
+        assert_eq!(search_panel_widths(10.0, true), (5.5, 0.0));
+        assert_eq!(search_panel_widths(0.0, true), (0.0, 0.0));
+        assert_eq!(search_panel_widths(-10.0, true), (0.0, 0.0));
+        assert_eq!(search_panel_widths(100.0, true), (55.0, 37.0));
+        assert_eq!(search_panel_widths(10.0, false), (10.0, 0.0));
+    }
+
+    #[test]
+    fn search_availability_excludes_expired_programmes_but_keeps_unknown_expiry() {
+        let now = chrono::Utc::now().timestamp();
+        let programmes = [
+            Programme {
+                expires: now - 1,
+                ..episode("expired", 1, 1)
+            },
+            Programme {
+                expires: now + 1,
+                ..episode("available", 1, 2)
+            },
+            Programme {
+                expires: 0,
+                ..episode("unknown expiry", 1, 3)
+            },
+        ];
+
+        let visible: Vec<&str> = programmes
+            .iter()
+            .filter(|programme| is_not_expired(programme, now))
+            .map(|programme| programme.pid.as_str())
+            .collect();
+        assert_eq!(visible, ["available", "unknown expiry"]);
+    }
+
+    #[test]
+    fn series_label_makes_missing_series_metadata_explicit() {
+        assert_eq!(series_label(Some(14)), "Series 14");
+        assert_eq!(series_label(None), "Series not specified");
+    }
 
     fn episode(pid: &str, season: u32, number: u32) -> Programme {
         Programme {

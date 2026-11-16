@@ -7,8 +7,10 @@ The GUI is the graphical application for `get_iplayer_rs`. It shares the CLI's c
 - Search TV and radio programmes, with each result showing its available date and description when supplied by the listing.
 - Sort search results by availability, newest first or oldest first.
 - Browse available episodes by show and season, select episodes for a batch, and queue downloads.
+- For a TV show, use **Load all available episodes** in its expanded Search result to retrieve the currently available archive from BBC iBL. Results are added to the shared TV cache and grouped by series; this can reveal older series not present in the current cache.
 - Browse the current BBC Films catalogue grouped into BBC collections.
 - Track download progress, view download history, and edit output and recording settings.
+- Name numbered recordings by default as `Show_Name.S01E02.mp4`; subtitle and thumbnail files share that stem. The CLI's `--file-prefix` option can customize filenames.
 - Refresh TV or radio caches manually. At startup, the app refreshes both caches if either is missing or more than three hours old; it also checks freshness every three hours while open.
 - View the GUI version, licence, BBC attribution, BBC Terms of Use, and TV Licence guidance on the **About** page.
 

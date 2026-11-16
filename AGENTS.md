@@ -57,6 +57,8 @@ cargo test
 *   Document all `pub` structs, enums, functions, and traits using doc comments (`///`).
 *   Provide module-level documentation (`//!`) at the top of main entry points (`lib.rs` / `main.rs`).
 *   Include code examples in doc comments where appropriate, ensuring they pass `cargo test --doc`.
+*   When a change affects user-visible behavior, features, build requirements, or project usage, update the relevant Markdown documentation in the same change (for example, `README.md`, `SPEC.md`, or the GUI documentation). Check whether more than one document needs an update.
+*   Maintain `CHANGE.md` as the historical changelist. Add concise bullet points under the correct CLI or GUI section and version; put work for the next release under an Unreleased heading until it is released.
 
 ---
 

@@ -3,8 +3,14 @@ name: Security & Vulnerability Checks
 on:
   push:
     branches: [ "main", "master" ]
+    paths-ignore:
+      - '*.md'
+      - '**/*.md'
   pull_request:
     branches: [ "main", "master" ]
+    paths-ignore:
+      - '*.md'
+      - '**/*.md'
   schedule:
     # Run daily at midnight to catch newly published RustSec advisories
     - cron: '0 0 * * *'

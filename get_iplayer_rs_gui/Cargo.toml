@@ -1,6 +1,6 @@
 [package]
 name = "get_iplayer_rs_gui"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 authors = ["get_iplayer_rs Contributors"]
 description = "GUI application for get_iplayer_rs - Lists and records BBC iPlayer TV and BBC Sounds radio programmes"

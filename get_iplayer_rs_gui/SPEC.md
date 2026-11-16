@@ -34,6 +34,9 @@
 - Allow TV, Radio, and All type selections. The current implementation maps All to an empty type list; the shared searcher interprets an empty type list as TV-only. Consequently, All currently behaves like TV and does not combine the radio cache.
 - Include scheduled future programmes in GUI searches.
 - Group matched programmes by show and season. Repeated episode subtitles can form a separate spin-off group.
+- Provide **Load all available episodes** in each expanded TV show result, without requiring the user to select an episode first. The action resolves the show's brand PID through the BBC iBL API, fetches every page of currently available episodes, and adds or updates those episodes in the shared TV cache.
+- Show a loading state while the archive request runs. On success, rerun the current search so newly cached episodes appear; on failure, report the error in the status message.
+- Populate returned archive episodes with available series and episode numbers, descriptions, channel, availability, expiry, duration, artwork, and version PIDs. Ignore expired entries in search results.
 - Show each episode's index, title, episode number when known, available date, description, and channel. If an episode title is missing, use its description or episode number as a fallback title.
 - Sort episodes by availability, newest first by default or oldest first. Order show groups by the newest matching episode in the selected direction.
 - Selecting an episode presents its programme details and available related episodes. Users can queue one episode, a season, a show, or a custom batch of selected episodes.
@@ -52,6 +55,7 @@
 - Prevent the same PID from being queued more than once while it is queued or running; a failed PID may be retried.
 - Run downloads asynchronously so the UI remains responsive.
 - Use the configured output directory, quality, proxy, subtitle, thumbnail, tagging, and subdirectory settings. Completed downloads update the shared history file.
+- Name programmes with both series and episode numbers by default as `<name>.S<series>E<episode>` with two-digit numbers. Use the same stem for subtitle and thumbnail sidecars. Respect a custom CLI `--file-prefix` template; retain the descriptive prefix for programmes without both numbers.
 
 ### 3.6 History tab
 
@@ -75,9 +79,10 @@
 
 1. **Start:** load local profile/cache/history, then refresh both caches if a cache is missing or stale.
 2. **Search and select:** enter search/channel filters; inspect grouped episodes, availability dates, and descriptions; select one or more entries.
-3. **Queue and record:** queue a programme or batch; monitor asynchronous item status in Downloads; successful recordings are added to shared history.
-4. **Browse films:** load the BBC Films catalogue, optionally filter to a collection, and queue individual or selected listings.
-5. **Configure:** edit shared options and save them for both GUI and CLI use.
+3. **Load an archive:** expand a TV show in Search and request all currently available episodes; the app fetches the iBL listing asynchronously, updates the shared TV cache, and refreshes the search results.
+4. **Queue and record:** queue a programme or batch; monitor asynchronous item status in Downloads; successful recordings are added to shared history.
+5. **Browse films:** load the BBC Films catalogue, optionally filter to a collection, and queue individual or selected listings.
+6. **Configure:** edit shared options and save them for both GUI and CLI use.
 
 ## 5. Architecture and boundaries
 
@@ -92,7 +97,7 @@
 - Shared profile files: `tv.cache`, `radio.cache`, `download_history`, and `options`.
 - On Linux, the folder picker uses GTK 3. Building from source requires GTK 3 development files, `pkg-config`, and the X11/Wayland development libraries used by eframe; the release workflow installs these packages.
 - The optional AccessKit screen-reader integration is disabled in the current dependency configuration.
-- Programme data and media access depend on BBC endpoints and can change or be unavailable independently of the application.
+- Programme data and media access depend on BBC endpoints, including the iBL API, and can change or be unavailable independently of the application.
 
 ## 7. Retrospective acceptance criteria
 
