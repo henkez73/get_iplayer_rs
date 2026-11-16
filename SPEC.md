@@ -38,7 +38,8 @@ This specification covers the CLI binary, shared search/index/cache/history func
 
 - Accept PIDs and BBC programme URLs through `--pid` and `--url`, or detect a PID/URL supplied as the first search term.
 - Retrieve programme metadata from BBC services if the PID is not in either cache.
-- `--pid-recursive` attempts to resolve a series or brand PID into related episode PIDs before processing.
+- Resolve episode metadata and related available episode PIDs through BBC's iBL API where supported; retain playlist/page metadata fallbacks for content not represented there.
+- `--pid-recursive` attempts to resolve a series or brand PID into related episode PIDs using the iBL programme episode listing.
 - Direct-PID requests can display metadata (`--info`), mark the programme as downloaded, or proceed to recording.
 
 ### 3.4 Recording and media processing
@@ -47,6 +48,7 @@ This specification covers the CLI binary, shared search/index/cache/history func
 - Select a stream according to the preferred TV or radio quality list, with a general quality preference available as a fallback.
 - Download HLS or DASH streams. Remux completed media with FFmpeg unless raw output is requested. TV output is MP4 by default; radio output and TV audio-only output use M4A.
 - Allow a dry run with `--test`, overwrite control, separate TV/radio output paths, output directory, filename and subdirectory templates, and whitespace preservation.
+- By default, name programmes with both series and episode numbers as `<name>.S<series>E<episode>` with two-digit numbers (for example, `Not_Going_Out.S01E02.mp4`). Subtitle and thumbnail sidecars use the same stem with `.srt` and `.jpg` extensions. Honor `--file-prefix` templates; retain the previous descriptive prefix for entries without both numbers.
 - Download subtitles as SRT when available; support monochrome subtitles, timestamp offsets, raw TTML retention, subtitle-only downloads, and soft-subtitle embedding.
 - Download thumbnails when requested or needed for tagging; support thumbnail-only operation.
 - Write JSON metadata sidecars when requested. Tag media with AtomicParsley or FFmpeg unless tagging is disabled; podcast tagging is optional.
@@ -82,7 +84,7 @@ This specification covers the CLI binary, shared search/index/cache/history func
 
 - `src/main.rs` orchestrates CLI configuration, cache operations, search, PVR work, and recording.
 - `src/cli.rs` defines the Clap command-line interface.
-- `src/indexer.rs`, `src/channels.rs`, `src/bbc_api.rs`, and `src/mediaselector.rs` retrieve and interpret BBC listing, programme, and stream metadata.
+- `src/indexer.rs`, `src/channels.rs`, `src/bbc_api.rs`, and `src/mediaselector.rs` retrieve and interpret BBC listing, iBL programme/episode, and stream metadata.
 - `src/cache.rs`, `src/search.rs`, `src/history.rs`, and `src/pvr.rs` implement local indexing, filtering, history, and PVR persistence.
 - `src/downloader/` provides HTTP, HLS, DASH, and the shared download pipeline. `src/subtitles.rs`, `src/postproc.rs`, and `src/tagger.rs` provide subtitle conversion, remuxing, and metadata handling.
 - The CLI and GUI share the `get_iplayer_rs` library and profile files. They have separate package versions and release tags.
@@ -98,7 +100,7 @@ This specification covers the CLI binary, shared search/index/cache/history func
 
 - Cache refresh is explicit in the CLI; three-hour automatic freshness checks belong to the GUI only.
 - The CLI parser currently declares `--pvr-scheduler`, `--subtitles-required`, `--include-format`, `--exclude-format`, `--include-supplier`, `--exclude-supplier`, `--command-tv`, and `--command-radio`, but the current runtime does not wire these flags into scheduling, filtering, or command execution. `--command` is the implemented post-download command option.
-- Search and media resolution depend on the structure and availability of BBC endpoints, listings, and stream metadata.
+- Search and media resolution depend on the structure and availability of BBC endpoints, including the iBL API, listings, and stream metadata.
 - Download recording uses BBC stream URLs and may fail for unavailable, expired, or geographically restricted programmes.
 
 ## 8. Retrospective acceptance criteria

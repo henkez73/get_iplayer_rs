@@ -5,7 +5,9 @@ A Rust application for searching and recording TV and radio programmes from BBC 
 ## Features
 
 - Search BBC iPlayer TV and BBC Sounds radio listings, including programme descriptions and episode details.
+- Load all currently available episodes for a TV programme from the BBC iBL catalogue, including archive series missing from the local cache.
 - Record programmes, download subtitles and thumbnails, and tag media metadata.
+- Name numbered recordings by default as `Show_Name.S01E02.mp4`; downloaded subtitles and thumbnails use the same filename stem.
 - Manage download history, saved PVR searches, and programme caches.
 - Use either the CLI or the GUI.
 - Download Linux x86-64 (AMD64) and ARM64 release binaries for both applications.
@@ -43,6 +45,8 @@ get_iplayer_rs --refresh --type all
 See `get_iplayer_rs --help` for all search, recording, PVR, cache, and output options.
 
 ## GUI
+
+In the GUI Search tab, expand a TV show and select **Load all available episodes** to fetch its currently available archive from the BBC iBL API. The returned episodes are added to the local TV cache and appear in search results with their series and episode details.
 
 See [get_iplayer_rs_gui/README.md](get_iplayer_rs_gui/README.md) for GUI build instructions and features.
 

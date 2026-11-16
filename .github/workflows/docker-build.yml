@@ -5,8 +5,13 @@ on:
     branches: [ main ]
     paths-ignore:
       - '.github/workflows/release.yml'
+      - '*.md'
+      - '**/*.md'
   push:
     branches: [ main ]
+    paths-ignore:
+      - '*.md'
+      - '**/*.md'
   workflow_dispatch:
     inputs:
       debug_enabled:

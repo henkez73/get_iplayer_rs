@@ -3,8 +3,14 @@ name: GUI Security Checks
 on:
   push:
     branches: [ main, master ]
+    paths-ignore:
+      - '*.md'
+      - '**/*.md'
   pull_request:
     branches: [ main, master ]
+    paths-ignore:
+      - '*.md'
+      - '**/*.md'
   schedule:
     - cron: '0 0 * * *'
 
