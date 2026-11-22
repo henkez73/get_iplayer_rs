@@ -9,6 +9,7 @@ Changes are grouped by application because the CLI and GUI use independent versi
 - Add live BBC iPlayer API search and programme/series resolution in `BbcApi` without requiring web scraping.
 - Replace retired iBL `/search` endpoint with A-to-Z programme listing search (`/atoz/{letter}/programmes`); search now matches all programmes whose title contains the query words, handling punctuation differences such as `"bill's"` → `"bills"`.
 - Support `/episodes/` plural URLs, partial URL paths, and `pid:` prefixes when parsing PIDs in `BbcApi`.
+- Update `url` dependency to 2.5.9 to address security advisory RUSTSEC-2026-0592.
 - Update Docker builder image to `rust:1.100-alpine`.
 
 ### 1.1.0
