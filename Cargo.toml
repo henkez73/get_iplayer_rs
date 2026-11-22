@@ -5,7 +5,7 @@ members = [
 
 [package]
 name = "get_iplayer_rs"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2021"
 authors = ["get_iplayer_rs Contributors"]
 description = "Lists and records BBC iPlayer TV and BBC Sounds radio programmes (Rust rewrite)"

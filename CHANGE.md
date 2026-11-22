@@ -4,7 +4,14 @@ Changes are grouped by application because the CLI and GUI use independent versi
 
 ## CLI
 
-### Unreleased (1.1.0)
+### Unreleased (1.1.1)
+
+- Add live BBC iPlayer API search and programme/series resolution in `BbcApi` without requiring web scraping.
+- Replace retired iBL `/search` endpoint with A-to-Z programme listing search (`/atoz/{letter}/programmes`); search now matches all programmes whose title contains the query words, handling punctuation differences such as `"bill's"` → `"bills"`.
+- Support `/episodes/` plural URLs, partial URL paths, and `pid:` prefixes when parsing PIDs in `BbcApi`.
+- Update Docker builder image to `rust:1.100-alpine`.
+
+### 1.1.0
 
 - Use the BBC iBL API for available archive episode lookup and recursive series PID resolution, with pagination across the full listing.
 - Default numbered programme filenames to `Show_Name.S01E02.ext`; subtitle and thumbnail sidecars use the same stem. Custom filename templates remain supported.
@@ -33,7 +40,17 @@ Changes are grouped by application because the CLI and GUI use independent versi
 
 ## GUI
 
-### Unreleased (1.1.0)
+### Unreleased (1.1.1)
+
+- Parallel downloads: up to N episodes download simultaneously (default 2, configurable 1–3 in Settings) using a tokio semaphore; queued items show ⏳ Queued until a slot is free.
+- Add "Max parallel downloads" control (range 1–3) in the Settings tab, persisted across restarts in the shared profile options file.
+- Bump `rfd` file-dialog dependency to 0.18.
+- Add live BBC iPlayer API search to the Search tab with **Search iPlayer API** and automatic resolution when entering BBC iPlayer episode or series URLs and PIDs.
+- Fix iPlayer API search returning HTTP 404: replaced the retired iBL `/search` endpoint with A-to-Z programme listing search so any show visible on BBC iPlayer can be found by title.
+- Add quick download by iPlayer URL or PID in the Downloads tab to queue content directly via the API.
+- Include future programme schedules during TV and radio cache refreshes so upcoming broadcasts are indexed in the cache.
+
+### 1.1.0
 
 - Load all currently available episodes for a TV show from the BBC iBL API directly from its expanded search result, then update the shared cache and search results.
 - Display series and episode details for archive results and filter expired programmes from search results.
