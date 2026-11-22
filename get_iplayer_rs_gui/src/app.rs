@@ -23,7 +23,7 @@ use std::{
     sync::{mpsc, Arc, Mutex},
     time::{Duration, Instant, SystemTime},
 };
-use tokio::runtime::Runtime;
+use tokio::{runtime::Runtime, sync::Semaphore};
 
 // ─── Tab selection ────────────────────────────────────────────────────────────
 
@@ -105,6 +105,13 @@ pub struct MyApp {
     next_cache_refresh_check: Instant,
     archive_loading: bool,
     archive_refresh_rx: Option<mpsc::Receiver<Result<Vec<Programme>, String>>>,
+    api_search_loading: bool,
+    api_search_rx: Option<mpsc::Receiver<Result<Vec<Programme>, String>>>,
+
+    // Quick download by URL or PID in Downloads tab
+    quick_download_input: String,
+    quick_download_loading: bool,
+    quick_download_rx: Option<mpsc::Receiver<Result<Vec<Programme>, String>>>,
 
     // History
     history: History,
@@ -130,6 +137,8 @@ pub struct MyApp {
     // Downloads
     download_queue: Arc<Mutex<Vec<DownloadItem>>>,
     download_options: DownloadOptions,
+    download_semaphore: Arc<Semaphore>,
+    max_parallel_downloads: u8,
 
     // Settings
     output_dir: String,
@@ -192,6 +201,15 @@ impl MyApp {
             ..Default::default()
         };
 
+        let max_parallel_downloads = config
+            .options
+            .get("parallel")
+            .or_else(|| config.options.get("maxparallel"))
+            .and_then(|v| v.parse::<u8>().ok())
+            .map(|v| v.clamp(1, 3))
+            .unwrap_or(2);
+        let download_semaphore = Arc::new(Semaphore::new(max_parallel_downloads as usize));
+
         let mut app = Self {
             rt,
             config,
@@ -203,6 +221,11 @@ impl MyApp {
             next_cache_refresh_check: Instant::now() + CACHE_MAX_AGE,
             archive_loading: false,
             archive_refresh_rx: None,
+            api_search_loading: false,
+            api_search_rx: None,
+            quick_download_input: String::new(),
+            quick_download_loading: false,
+            quick_download_rx: None,
             history,
             search_query: String::new(),
             search_prog_type: ProgrammeType::Tv,
@@ -220,6 +243,8 @@ impl MyApp {
             selected_film_pids: HashSet::new(),
             download_queue: Arc::new(Mutex::new(Vec::new())),
             download_options,
+            download_semaphore,
+            max_parallel_downloads,
             output_dir,
             proxy,
             tv_quality,
@@ -269,8 +294,15 @@ impl MyApp {
             .cloned()
             .collect();
         self.selected_episode_pids.clear();
-        self.status_message = format!("Found {} programmes", self.search_results.len());
         self.selected_prog = None;
+
+        // If local search found nothing and the query looks like a PID or iPlayer URL,
+        // automatically query the BBC iPlayer API
+        if self.search_results.is_empty() && BbcApi::parse_pid(&self.search_query).is_some() {
+            self.search_iplayer_api();
+        } else {
+            self.status_message = format!("Found {} programmes", self.search_results.len());
+        }
     }
 
     // ─── Cache refresh ────────────────────────────────────────────────────────
@@ -304,11 +336,20 @@ impl MyApp {
                             .refresh(&mut tv, ProgrammeType::Tv, days, false, false)
                             .await
                             .map_err(|error| error.to_string())?;
+                        // Also index future schedules so upcoming broadcasts are cached
+                        indexer
+                            .refresh(&mut tv, ProgrammeType::Tv, 14, true, false)
+                            .await
+                            .map_err(|error| error.to_string())?;
                         tv.save_file(&tv_path).map_err(|error| error.to_string())?;
                     }
                     if prog_type == ProgrammeType::Radio || prog_type == ProgrammeType::All {
                         indexer
                             .refresh(&mut radio, ProgrammeType::Radio, days, false, false)
+                            .await
+                            .map_err(|error| error.to_string())?;
+                        indexer
+                            .refresh(&mut radio, ProgrammeType::Radio, 14, true, false)
                             .await
                             .map_err(|error| error.to_string())?;
                         radio
@@ -460,6 +501,136 @@ impl MyApp {
         }
     }
 
+    fn search_iplayer_api(&mut self) {
+        let query = self.search_query.trim().to_string();
+        if self.api_search_loading || query.is_empty() {
+            return;
+        }
+        self.api_search_loading = true;
+        self.status_message = format!("Searching BBC iPlayer API for '{query}'…");
+        let (tx, rx) = mpsc::channel();
+        self.api_search_rx = Some(rx);
+        std::thread::spawn(move || {
+            let result = Runtime::new()
+                .map_err(|error| error.to_string())
+                .and_then(|runtime| {
+                    runtime
+                        .block_on(BbcApi::new().search_iplayer(&query))
+                        .map_err(|error| error.to_string())
+                });
+            let _ = tx.send(result);
+        });
+    }
+
+    fn poll_api_search(&mut self) {
+        let Some(receiver) = &self.api_search_rx else {
+            return;
+        };
+        match receiver.try_recv() {
+            Ok(Ok(programmes)) => {
+                self.api_search_loading = false;
+                self.api_search_rx = None;
+                if programmes.is_empty() {
+                    self.status_message = "No programmes found on BBC iPlayer API".to_string();
+                    return;
+                }
+                let count = programmes.len();
+                for prog in &programmes {
+                    if let Some(&idx) = self.tv_cache.by_pid.get(&prog.pid) {
+                        self.tv_cache.programmes[idx] = prog.clone();
+                    } else {
+                        let idx = self.tv_cache.programmes.len();
+                        self.tv_cache.by_pid.insert(prog.pid.clone(), idx);
+                        self.tv_cache.programmes.push(prog.clone());
+                    }
+                }
+                self.tv_cache
+                    .sort_and_reindex(ProgrammeType::Tv.index_min());
+                let _ = self.tv_cache.save_file(self.config.cache_file("tv"));
+                self.search_results = programmes;
+                self.status_message = format!("Loaded {count} programme(s) from BBC iPlayer API");
+            }
+            Ok(Err(error)) => {
+                self.api_search_loading = false;
+                self.api_search_rx = None;
+                self.status_message = format!("BBC iPlayer API search failed: {error}");
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.api_search_loading = false;
+                self.api_search_rx = None;
+                self.status_message =
+                    "BBC iPlayer API search failed: background task stopped".to_string();
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+        }
+    }
+
+    fn queue_from_url_or_pid(&mut self, input: &str) {
+        let query = input.trim().to_string();
+        if self.quick_download_loading || query.is_empty() {
+            return;
+        }
+        self.quick_download_loading = true;
+        self.status_message = format!("Resolving '{query}' from BBC iPlayer API…");
+        let (tx, rx) = mpsc::channel();
+        self.quick_download_rx = Some(rx);
+        std::thread::spawn(move || {
+            let result = Runtime::new()
+                .map_err(|error| error.to_string())
+                .and_then(|runtime| {
+                    runtime
+                        .block_on(BbcApi::new().get_programme_or_series(&query))
+                        .map_err(|error| error.to_string())
+                });
+            let _ = tx.send(result);
+        });
+    }
+
+    fn poll_quick_download(&mut self) {
+        let Some(receiver) = &self.quick_download_rx else {
+            return;
+        };
+        match receiver.try_recv() {
+            Ok(Ok(episodes)) => {
+                self.quick_download_loading = false;
+                self.quick_download_rx = None;
+                self.quick_download_input.clear();
+                if episodes.is_empty() {
+                    self.status_message =
+                        "No available episodes found for that URL or PID on BBC iPlayer"
+                            .to_string();
+                    return;
+                }
+                let count = episodes.len();
+                for ep in &episodes {
+                    if let Some(&idx) = self.tv_cache.by_pid.get(&ep.pid) {
+                        self.tv_cache.programmes[idx] = ep.clone();
+                    } else {
+                        let idx = self.tv_cache.programmes.len();
+                        self.tv_cache.by_pid.insert(ep.pid.clone(), idx);
+                        self.tv_cache.programmes.push(ep.clone());
+                    }
+                }
+                self.tv_cache
+                    .sort_and_reindex(ProgrammeType::Tv.index_min());
+                let _ = self.tv_cache.save_file(self.config.cache_file("tv"));
+                self.enqueue_episodes(episodes);
+                self.status_message = format!("Queued {count} episode(s) from BBC iPlayer");
+            }
+            Ok(Err(error)) => {
+                self.quick_download_loading = false;
+                self.quick_download_rx = None;
+                self.status_message = format!("Could not resolve from BBC iPlayer: {error}");
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.quick_download_loading = false;
+                self.quick_download_rx = None;
+                self.status_message = "Quick download failed: background task stopped".to_string();
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+        }
+    }
+
     fn load_film_catalogue(&mut self) {
         if self.film_loading {
             return;
@@ -560,6 +731,7 @@ impl MyApp {
     fn spawn_download(&self, prog: Programme) {
         let queue_arc = self.download_queue.clone();
         let options = self.download_options.clone();
+        let semaphore = self.download_semaphore.clone();
         let pid = prog.pid.clone();
 
         let proxy_str = if self.proxy.trim().is_empty() {
@@ -569,6 +741,18 @@ impl MyApp {
         };
 
         self.rt.spawn(async move {
+            let Ok(_permit) = semaphore.acquire().await else {
+                return;
+            };
+
+            {
+                let mut queue = queue_arc.lock().unwrap();
+                if let Some(item) = queue.iter_mut().find(|d| d.prog.pid == pid) {
+                    item.status = DownloadStatus::Running;
+                    item.stage = "Starting…".to_string();
+                }
+            }
+
             let bbc_api = BbcApi::new();
             let mediaselector = Mediaselector::new();
             let downloader = Downloader::new(proxy_str.as_deref());
@@ -600,14 +784,6 @@ impl MyApp {
                     }
                 });
 
-            {
-                let mut queue = queue_arc.lock().unwrap();
-                if let Some(item) = queue.iter_mut().find(|d| d.prog.pid == pid) {
-                    item.status = DownloadStatus::Running;
-                    item.stage = "Starting…".to_string();
-                }
-            }
-
             let mut prog_mut = prog;
             let result = get_iplayer_common::downloader::pipeline::download_programme(
                 &mut prog_mut,
@@ -634,6 +810,15 @@ impl MyApp {
                 }
             }
         });
+    }
+
+    fn set_max_parallel_downloads(&mut self, n: u8) {
+        let clamped = n.clamp(1, 3);
+        if clamped != self.max_parallel_downloads {
+            self.max_parallel_downloads = clamped;
+            self.download_semaphore = Arc::new(Semaphore::new(clamped as usize));
+            self.settings_dirty = true;
+        }
     }
 
     // ─── UI panels ───────────────────────────────────────────────────────────
@@ -731,6 +916,20 @@ impl MyApp {
             if ui.button("Search").clicked() {
                 self.run_search();
             }
+            if ui
+                .add_enabled(
+                    !self.api_search_loading && !self.search_query.trim().is_empty(),
+                    egui::Button::new(if self.api_search_loading {
+                        "Searching iPlayer…"
+                    } else {
+                        "🌐 Search iPlayer API"
+                    }),
+                )
+                .on_hover_text("Search the live BBC iPlayer API for this title or URL/PID")
+                .clicked()
+            {
+                self.search_iplayer_api();
+            }
             if ui.button("Clear").clicked() {
                 self.search_query.clear();
                 self.search_channel.clear();
@@ -760,10 +959,32 @@ impl MyApp {
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         if self.search_results.is_empty() {
-                            ui.label(
-                                RichText::new("No results. Enter a search term and press Search.")
-                                    .color(Color32::GRAY),
-                            );
+                            if self.api_search_loading {
+                                ui.horizontal(|ui| {
+                                    ui.spinner();
+                                    ui.label("Searching BBC iPlayer API…");
+                                });
+                            } else if !self.search_query.trim().is_empty() {
+                                ui.vertical(|ui| {
+                                    ui.label(
+                                        RichText::new("No matching programmes found in local cache.")
+                                            .color(Color32::GRAY),
+                                    );
+                                    ui.add_space(4.0);
+                                    if ui
+                                        .button("🌐 Search BBC iPlayer API for this title")
+                                        .on_hover_text("Query the live BBC iPlayer API directly")
+                                        .clicked()
+                                    {
+                                        self.search_iplayer_api();
+                                    }
+                                });
+                            } else {
+                                ui.label(
+                                    RichText::new("No results. Enter a programme name, PID, or iPlayer URL and press Search.")
+                                        .color(Color32::GRAY),
+                                );
+                            }
                         } else {
                             let results_clone: Vec<Programme> = self.search_results.clone();
                             let show_groups =
@@ -1292,6 +1513,36 @@ impl MyApp {
         });
         ui.separator();
 
+        // Add by URL or PID
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Add by URL / PID:").strong());
+            let edit = ui.add(
+                egui::TextEdit::singleline(&mut self.quick_download_input)
+                    .desired_width(340.0)
+                    .hint_text("Paste BBC iPlayer episode/series URL, or PID…"),
+            );
+            let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let btn = ui
+                .add_enabled(
+                    !self.quick_download_loading && !self.quick_download_input.trim().is_empty(),
+                    egui::Button::new(if self.quick_download_loading {
+                        "Fetching from BBC API…"
+                    } else {
+                        "⬇ Queue from iPlayer"
+                    }),
+                )
+                .on_hover_text("Fetch programme/series from BBC iPlayer API and queue download")
+                .clicked();
+            if (enter || btn) && !self.quick_download_input.trim().is_empty() {
+                let input = self.quick_download_input.clone();
+                self.queue_from_url_or_pid(&input);
+            }
+            if self.quick_download_loading {
+                ui.spinner();
+            }
+        });
+        ui.separator();
+
         // Clear done
         let can_clear = {
             let q = self.download_queue.lock().unwrap();
@@ -1597,6 +1848,35 @@ impl MyApp {
                         }
                         ui.end_row();
 
+                        ui.label(RichText::new("Max parallel downloads").strong());
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add_enabled(
+                                    self.max_parallel_downloads > 1,
+                                    egui::Button::new("−"),
+                                )
+                                .clicked()
+                            {
+                                self.set_max_parallel_downloads(self.max_parallel_downloads - 1);
+                            }
+                            ui.label(
+                                RichText::new(self.max_parallel_downloads.to_string()).strong(),
+                            );
+                            if ui
+                                .add_enabled(
+                                    self.max_parallel_downloads < 3,
+                                    egui::Button::new("+"),
+                                )
+                                .clicked()
+                            {
+                                self.set_max_parallel_downloads(self.max_parallel_downloads + 1);
+                            }
+                            ui.label(
+                                RichText::new("(1–3 simultaneous downloads)").color(Color32::GRAY),
+                            );
+                        });
+                        ui.end_row();
+
                         ui.label(RichText::new("Profile directory").strong());
                         ui.label(
                             RichText::new(self.config.profile_dir.display().to_string())
@@ -1695,6 +1975,9 @@ impl MyApp {
         } else {
             self.config.prefs_del("subtitles");
         }
+        self.download_semaphore = Arc::new(Semaphore::new(self.max_parallel_downloads as usize));
+        self.config
+            .prefs_add("parallel", &self.max_parallel_downloads.to_string());
 
         match self.config.save_options() {
             Ok(()) => {
@@ -1711,13 +1994,20 @@ impl eframe::App for MyApp {
         self.poll_cache_refresh();
         self.poll_series_archive();
         self.poll_film_catalogue();
+        self.poll_api_search();
+        self.poll_quick_download();
         if Instant::now() >= self.next_cache_refresh_check {
             self.next_cache_refresh_check = Instant::now() + CACHE_MAX_AGE;
             if self.cache_files_are_stale() {
                 self.refresh_cache(ProgrammeType::All, 7);
             }
         }
-        if self.cache_loading || self.film_loading || self.archive_loading {
+        if self.cache_loading
+            || self.film_loading
+            || self.archive_loading
+            || self.api_search_loading
+            || self.quick_download_loading
+        {
             ctx.request_repaint_after(Duration::from_millis(100));
         } else {
             ctx.request_repaint_after(
@@ -2294,5 +2584,84 @@ mod tests {
         assert_eq!(shelves[1].title, "Films to Fall in Love With");
         assert_eq!(shelves[1].films.len(), 1);
         assert_eq!(shelves[1].films[0].pid, "b0123456");
+    }
+
+    #[test]
+    fn groups_and_orders_episodes_from_api_archive() {
+        let episodes = vec![
+            Programme {
+                name: "Bill's Included".to_string(),
+                episode: "Episode 2".to_string(),
+                seriesnum: Some(1),
+                episodenum: Some(2),
+                pid: "m0026b46".to_string(),
+                available: "2026-11-20T06:00:00Z".to_string(),
+                ..Default::default()
+            },
+            Programme {
+                name: "Bill's Included".to_string(),
+                episode: "Episode 1".to_string(),
+                seriesnum: Some(1),
+                episodenum: Some(1),
+                pid: "m0026b45".to_string(),
+                available: "2026-11-20T06:00:00Z".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let groups = group_search_results(&episodes, false);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].title, "Bill's Included");
+        assert_eq!(groups[0].seasons.len(), 1);
+        assert_eq!(groups[0].seasons[0].label, "Series 1");
+        assert_eq!(groups[0].seasons[0].episodes.len(), 2);
+        assert_eq!(groups[0].seasons[0].episodes[0].pid, "m0026b45");
+        assert_eq!(groups[0].seasons[0].episodes[1].pid, "m0026b46");
+    }
+
+    #[test]
+    fn max_parallel_downloads_clamps_to_valid_range() {
+        let clamp_val = |raw: Option<&str>| -> u8 {
+            raw.and_then(|v| v.parse::<u8>().ok())
+                .map(|v| v.clamp(1, 3))
+                .unwrap_or(2)
+        };
+        assert_eq!(clamp_val(None), 2);
+        assert_eq!(clamp_val(Some("0")), 1);
+        assert_eq!(clamp_val(Some("1")), 1);
+        assert_eq!(clamp_val(Some("2")), 2);
+        assert_eq!(clamp_val(Some("3")), 3);
+        assert_eq!(clamp_val(Some("4")), 3);
+        assert_eq!(clamp_val(Some("abc")), 2);
+    }
+
+    #[tokio::test]
+    async fn download_semaphore_limits_concurrency() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let semaphore = Arc::new(Semaphore::new(2));
+        let active = Arc::new(AtomicUsize::new(0));
+        let max_observed = Arc::new(AtomicUsize::new(0));
+
+        let mut handles = Vec::new();
+        for _ in 0..5 {
+            let sem = semaphore.clone();
+            let act = active.clone();
+            let max_obs = max_observed.clone();
+            handles.push(tokio::spawn(async move {
+                let Ok(_permit) = sem.acquire().await else {
+                    return;
+                };
+                let count = act.fetch_add(1, Ordering::SeqCst) + 1;
+                max_obs.fetch_max(count, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                act.fetch_sub(1, Ordering::SeqCst);
+            }));
+        }
+
+        for h in handles {
+            let _ = h.await;
+        }
+
+        assert_eq!(max_observed.load(Ordering::SeqCst), 2);
     }
 }

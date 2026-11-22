@@ -1,43 +1,211 @@
-# Product and Engineering Plan
+# Plan: Parallel Downloads (2–3 Slots)
 
-**Status:** Prioritized backlog of proposed work. Items are ideas for discussion, not commitments or scheduled releases. Effort estimates are relative and will need review before implementation.
+**Scope:** GUI only (`get_iplayer_rs_gui`). The CLI and shared library are unchanged.
 
-This plan complements the retrospective [CLI specification](SPEC.md) and [GUI specification](get_iplayer_rs_gui/SPEC.md). The specifications describe implemented behavior; this file tracks possible improvements.
+---
 
-## Prioritization
+## Background
 
-Priority reflects user impact, how directly an item addresses a known gap, and likely implementation scope. Effort uses **S** (small), **M** (medium), and **L** (large); these are initial estimates, not delivery promises.
+Currently `enqueue_download()` calls `spawn_download()` immediately for every
+episode added to the queue.  Each `spawn_download()` fires a `tokio` task on
+the shared `Runtime`.  Because the runtime has no concurrency cap, all queued
+episodes race to start at the same time — in practice only one or two make
+progress because the BBC CDN throttles burst connections from a single IP.
 
-## Near-term candidates
+The fix introduces a **bounded semaphore** that limits how many downloads run
+concurrently, while keeping the existing per-episode async task structure.
 
-| Priority | Feature | Benefit | Initial effort | Dependencies / notes |
-| --- | --- | --- | --- | --- |
-| 1 | Make GUI **All** search include both TV and radio | Fixes the documented mismatch where All currently searches TV only. | S–M | Confirm shared search accepts both cache types together; add regression tests for TV, radio, and combined results. |
-| 2 | Show cache freshness and refresh state | Makes automatic and manual refresh behavior understandable; users can see when each cache was last updated and whether refresh failed. | S–M | Read cache timestamps and surface per-cache status in the GUI. Consider clear behavior for missing caches and failed refreshes. |
-| 3 | Improve download queue controls | Gives users more control over long or mistaken batches. Start with retry and cancellation; consider pause and reordering separately. | M–L | Cancellation may require propagating cancellation through the shared downloader and external FFmpeg/post-processing steps. Define whether cancelled items update history. |
-| 4 | Improve download failure explanations | Helps users understand and recover from expired listings, unavailable streams, missing tools, and network errors. | M | Normalize errors from the shared recording pipeline and present actionable detail in the GUI; preserve useful CLI diagnostics. |
+---
 
-## Follow-on candidates
+## Goals
 
-| Priority | Feature | Benefit | Initial effort | Dependencies / notes |
-| --- | --- | --- | --- | --- |
-| 5 | Expand GUI search filters | Bring GUI search closer to CLI filtering, including availability/expiry ranges and recorded-item options. | M | Reuse shared search filtering where possible; keep controls understandable for common searches. |
-| 6 | Save and repeat GUI searches | Makes recurring searches easier to use. | M | Decide whether searches live in the shared profile and whether they are GUI-only or interoperable with CLI PVR searches. |
-| 7 | Export search results | Lets users inspect, archive, or process results outside the app. | S–M | Choose supported formats (CSV, JSON, or both) and define which fields are exported. |
-| 8 | Improve history filtering | Makes larger histories easier to navigate by date, media type, and recording outcome. | M | History currently records successful downloads and manually marked items; failure history may require a data format change. |
-| 9 | Configurable automatic cache refresh | Lets users choose a refresh interval or disable automatic refresh. | S–M | Define settings defaults and shared behavior; currently the GUI uses a fixed three-hour freshness threshold and the CLI refreshes explicitly. |
+- Run at most N episodes simultaneously (default **2**, user-configurable to 3).
+- Queued episodes wait for a slot; they do not spin or poll.
+- The Downloads tab shows each in-flight episode's progress bar independently
+  (this already works since progress is stored per `DownloadItem` in the shared
+  `Vec`).
+- A "Max parallel downloads" spinner (1–3) is exposed in Settings.
+- No change to the CLI, shared library, or download pipeline logic.
 
-## Larger or exploratory work
+---
 
-| Priority | Feature | Benefit | Initial effort | Dependencies / notes |
-| --- | --- | --- | --- | --- |
-| 10 | PVR scheduling | Runs saved searches automatically instead of requiring a manual CLI invocation. | L | Needs a scheduler lifecycle, duplicate handling, logging, and clear behavior when the app is closed. Could begin with an explicit CLI scheduler mode. |
-| 11 | Accessibility improvements | Makes the GUI more usable with assistive technology and keyboard navigation. | M–L | Review the current AccessKit configuration, restore or replace screen-reader integration, and validate on supported Linux desktops. |
-| 12 | Release update notifications | Helps users discover new versions. | M | Define update source, release channels, and user controls; avoid downloading or installing updates without an explicit user action. |
-| 13 | Windows binaries | Expands platform support. | M–L | Requires Windows CI builds, dependency and path checks, packaging decisions, and validation on Windows. Linux remains the current release target. |
+## Non-Goals
 
-## Working conventions
+- Parallelising HLS chunk fetching inside a single episode (requires patching
+  the downloader pipeline — out of scope).
+- More than 3 parallel downloads (BBC CDN risk).
+- Resumable downloads (separate concern).
 
-- Revisit priorities before starting an item; the order is a proposal, not a commitment.
-- Add or update tests for every behavior change, including regression coverage for known gaps.
-- Update the relevant README and retrospective SPEC when implemented behavior changes; keep this plan focused on work that remains proposed or in progress.
+---
+
+## Architecture
+
+### New shared state
+
+```
+Arc<Semaphore>   — tokio::sync::Semaphore with `max_parallel` permits
+```
+
+Added to `MyApp` alongside `download_queue`:
+
+```rust
+download_semaphore: Arc<tokio::sync::Semaphore>,
+max_parallel_downloads: u8,   // 1..=3, persisted in settings
+```
+
+### How `spawn_download` changes
+
+```
+Before:
+  rt.spawn(async { ... download_programme() ... })
+           ↑ starts immediately, no cap
+
+After:
+  rt.spawn(async {
+      let _permit = semaphore.acquire().await;   // blocks until a slot is free
+      // ... existing download_programme() logic unchanged ...
+      // permit is dropped at end of task → slot freed
+  })
+```
+
+The `acquire()` call suspends the task (not the thread) while waiting, so
+tokio's thread pool is not wasted.
+
+---
+
+## Detailed Changes
+
+### 1. `get_iplayer_rs_gui/src/app.rs`
+
+#### 1a. `MyApp` struct — add two fields
+
+```rust
+download_semaphore: Arc<tokio::sync::Semaphore>,
+max_parallel_downloads: u8,
+```
+
+#### 1b. `MyApp::new()` — initialise them
+
+```rust
+let max_parallel = 2u8;
+// …
+download_semaphore: Arc::new(tokio::sync::Semaphore::new(max_parallel as usize)),
+max_parallel_downloads: max_parallel,
+```
+
+#### 1c. `spawn_download()` — acquire permit before starting
+
+Wrap the existing `rt.spawn` body:
+
+```rust
+fn spawn_download(&self, prog: Programme) {
+    let semaphore = self.download_semaphore.clone();
+    // … existing clones …
+
+    self.rt.spawn(async move {
+        // Wait for a free slot (suspends task, not thread)
+        let _permit = semaphore.acquire().await
+            .expect("download semaphore closed");
+
+        // Set status to Running now that we have a slot
+        { /* queue.iter_mut().find(pid).status = Running */ }
+
+        // … existing download_programme() call and result handling …
+
+        // _permit dropped here → slot freed for next queued task
+    });
+}
+```
+
+> **Note:** The status transition `Queued → Running` moves from *before*
+> `spawn` to *after* `acquire()`.  Items show as **⏳ Queued** while waiting
+> for a slot and **▶ Running** only once they actually start downloading.
+
+#### 1d. `enqueue_download()` — no structural change needed
+
+The function still calls `spawn_download()` immediately.  The semaphore inside
+the spawned task is what gates actual work.
+
+#### 1e. Settings panel — add spinner
+
+In `ui_settings()`, add a row alongside the existing proxy/output-dir fields:
+
+```
+Max parallel downloads:  [−]  2  [+]     (range 1–3)
+```
+
+When the user changes the value:
+1. Store the new value in `self.max_parallel_downloads`.
+2. Replace `self.download_semaphore` with a new semaphore of the updated size.
+
+> **Warning:** Replacing the semaphore while downloads are running is safe:
+> in-flight tasks hold permits on the *old* semaphore (via `Arc`), which stays
+> alive until all those tasks finish.  New tasks pick up the new semaphore.
+> There is no race condition.
+
+#### 1f. Downloads tab UI — no structural changes required
+
+`DownloadStatus` already has `Queued` / `Running` states and the tab already
+renders them differently (`⏳` vs `▶`).  Multiple `Running` rows will naturally
+appear side-by-side once the semaphore allows it.
+
+#### 1g. Persist the setting
+
+`max_parallel_downloads` should round-trip through `Config` (or the app's
+existing settings-persistence mechanism) so the preference survives restarts.
+
+---
+
+### 2. `get_iplayer_rs_gui/SPEC.md`
+
+Update section **3.4 Downloads** to describe the concurrency model and the new
+settings field.
+
+---
+
+### 3. `CHANGE.md`
+
+Add under GUI **Unreleased**:
+
+```
+- Parallel downloads: up to N episodes download simultaneously (default 2,
+  configurable 1–3 in Settings) using a tokio semaphore; queued items show
+  ⏳ Queued until a slot is free.
+```
+
+---
+
+## Implementation Order
+
+```
+Step 1  Add fields to MyApp struct and initialise in new()
+Step 2  Modify spawn_download() to acquire semaphore permit
+Step 3  Move Queued→Running transition to after acquire()
+Step 4  Add Settings UI spinner + semaphore replacement on change
+Step 5  Persist max_parallel_downloads in Config / settings file
+Step 6  Update SPEC.md and CHANGE.md
+Step 7  cargo fmt, cargo clippy, cargo test, cargo build --release
+```
+
+---
+
+## Testing Plan
+
+| Test | Method |
+|---|---|
+| Unit: semaphore limits concurrency to N | Mock `spawn_download` calls; assert max `Running` count ≤ N |
+| Unit: slot freed on completion | Verify next `Queued` item transitions to `Running` after one finishes |
+| Unit: changing N replaces semaphore without panic | Call setter while tasks hold old permits |
+| Manual: queue 5 episodes, observe ≤ 2 `▶ Running` rows at once | Live run |
+| Manual: change setting to 3, verify 3 run simultaneously | Live run |
+| Regression: single-episode download still works | `cargo test` + live run |
+
+---
+
+## Risk Assessment
+
+| Risk | Likelihood | Mitigation |
+|---|---|---|
+| BBC CDN throttles at N=3 | Low–Medium | Default stays at 2; user opts in to 3 |
+| `History` write contention (two tasks finish simultaneously) | Low | `History::new()` is per-task; each holds its own file handle; last-write-wins is acceptable for history |
+| Semaphore replacement races | None | Old `Arc<Semaphore>` outlives in-flight tasks; new one picked up by subsequent `spawn_download` calls |

@@ -32,7 +32,8 @@
 
 - Search the in-memory TV/radio cache using programme and episode names, with a channel filter and a **Hide recorded** option.
 - Allow TV, Radio, and All type selections. The current implementation maps All to an empty type list; the shared searcher interprets an empty type list as TV-only. Consequently, All currently behaves like TV and does not combine the radio cache.
-- Include scheduled future programmes in GUI searches.
+- Query the live BBC iPlayer API directly via **Search iPlayer API** or automatically when entering an iPlayer episode or series URL or PID that is not yet present in the local schedule cache. Retrieved programmes and episodes are merged into the shared TV cache and displayed.
+- Include scheduled future programmes in GUI searches and cache refreshes.
 - Group matched programmes by show and season. Repeated episode subtitles can form a separate spin-off group.
 - Provide **Load all available episodes** in each expanded TV show result, without requiring the user to select an episode first. The action resolves the show's brand PID through the BBC iBL API, fetches every page of currently available episodes, and adds or updates those episodes in the shared TV cache.
 - Show a loading state while the archive request runs. On success, rerun the current search so newly cached episodes appear; on failure, report the error in the status message.
@@ -49,12 +50,12 @@
 
 ### 3.5 Download queue
 
-- Queue an individual programme, selected episodes, a season/show batch, or selected films.
+- Queue an individual programme, selected episodes, a season/show batch, selected films, or directly by BBC iPlayer episode/series URL or PID via the quick download input.
 - Resolve programme metadata and stream URLs, then run the shared recording pipeline.
 - Show per-item queued/running/completed/failed state, progress stage, percentage, and errors. Display queue totals for each status.
 - Prevent the same PID from being queued more than once while it is queued or running; a failed PID may be retried.
-- Run downloads asynchronously so the UI remains responsive.
-- Use the configured output directory, quality, proxy, subtitle, thumbnail, tagging, and subdirectory settings. Completed downloads update the shared history file.
+- Run downloads asynchronously so the UI remains responsive, with concurrency bounded by a semaphore (default 2, configurable 1–3); queued items wait with status Queued until a slot is free before transitioning to Running.
+- Use the configured output directory, quality, proxy, subtitle, thumbnail, tagging, subdirectory, and parallel download settings. Completed downloads update the shared history file.
 - Name programmes with both series and episode numbers by default as `<name>.S<series>E<episode>` with two-digit numbers. Use the same stem for subtitle and thumbnail sidecars. Respect a custom CLI `--file-prefix` template; retain the descriptive prefix for programmes without both numbers.
 
 ### 3.6 History tab
@@ -65,7 +66,7 @@
 
 ### 3.7 Settings tab
 
-- Edit the output directory, TV and radio quality, HTTP proxy, subtitle download and embedding, thumbnail retention, metadata tagging, and per-series subdirectory behavior.
+- Edit the output directory, TV and radio quality, HTTP proxy, subtitle download and embedding, thumbnail retention, metadata tagging, per-series subdirectory behavior, and maximum parallel downloads (1–3).
 - Mark edits as unsaved until **Save settings** is selected.
 - Persist settings in the shared `options` file so the CLI can use them too.
 

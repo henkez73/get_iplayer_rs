@@ -33,24 +33,32 @@ impl BbcApi {
 
     /// Extracts PID from URL or raw string
     pub fn parse_pid(input: &str) -> Option<String> {
-        let input = input.trim();
+        let mut input = input.trim();
+        if let Some(stripped) = input
+            .strip_prefix("pid:")
+            .or_else(|| input.strip_prefix("PID:"))
+        {
+            input = stripped.trim();
+        }
         if Self::is_valid_pid(input) {
             return Some(input.to_string());
         }
 
         if let Ok(parsed_url) = url::Url::parse(input) {
-            let segments: Vec<&str> = parsed_url.path_segments()?.collect();
-            // Look for segments matching PID pattern from right to left
-            for seg in segments.iter().rev() {
-                if Self::is_valid_pid(seg) {
-                    return Some(seg.to_string());
+            if let Some(segments) = parsed_url.path_segments() {
+                let segs: Vec<&str> = segments.collect();
+                // Look for segments matching PID pattern from right to left
+                for seg in segs.iter().rev() {
+                    if Self::is_valid_pid(seg) {
+                        return Some(seg.to_string());
+                    }
                 }
             }
         }
 
         // Regex fallback
         let re =
-            Regex::new(r"/(?:episode|play|programmes|brand)/([b-df-hj-np-tv-z0-9]{8,})").unwrap();
+            Regex::new(r"/(?:episodes?|play|programmes|brand)/([b-df-hj-np-tv-z0-9]{8,})").unwrap();
         if let Some(caps) = re.captures(input) {
             if let Some(m) = caps.get(1) {
                 return Some(m.as_str().to_string());
@@ -191,7 +199,7 @@ impl BbcApi {
         Ok(programmes)
     }
 
-    async fn fetch_ibl_programme_episodes(
+    pub async fn fetch_ibl_programme_episodes(
         &self,
         programme_pid: &str,
     ) -> Result<Vec<Value>, Box<dyn std::error::Error + Send + Sync>> {
@@ -233,6 +241,282 @@ impl BbcApi {
             page += 1;
         }
         Ok(episodes)
+    }
+
+    /// Fetches all available programmes/episodes for a given PID or iPlayer URL using the iBL API.
+    /// Handles brand PIDs, series PIDs, episode PIDs, and iPlayer URLs.
+    pub async fn get_programme_or_series(
+        &self,
+        pid_or_url: &str,
+    ) -> Result<Vec<Programme>, Box<dyn std::error::Error + Send + Sync>> {
+        let pid = Self::parse_pid(pid_or_url).ok_or_else(|| {
+            std::io::Error::other(format!("Could not extract a valid PID from '{pid_or_url}'"))
+        })?;
+
+        let default_seed = Programme {
+            pid: pid.clone(),
+            prog_type: ProgrammeType::Tv,
+            channel: "BBC iPlayer".to_string(),
+            ..Default::default()
+        };
+
+        // 1. Try fetching as a programme / brand PID (e.g. from an episodes URL)
+        if let Ok(entries) = self.fetch_ibl_programme_episodes(&pid).await {
+            let mut episodes = Vec::new();
+            for entry in &entries {
+                if let Some(prog) = programme_from_ibl_episode(entry, &default_seed) {
+                    episodes.push(prog);
+                }
+            }
+            if !episodes.is_empty() {
+                episodes.sort_by(|a, b| {
+                    a.seriesnum
+                        .cmp(&b.seriesnum)
+                        .then_with(|| a.episodenum.cmp(&b.episodenum))
+                        .then_with(|| a.episode.cmp(&b.episode))
+                });
+                return Ok(episodes);
+            }
+        }
+
+        // 2. Otherwise treat as an episode PID
+        let prog = self.get_programme_info(&pid).await?;
+        if let Ok(archive) = self.get_series_archive(&prog).await {
+            if !archive.is_empty() {
+                return Ok(archive);
+            }
+        }
+
+        Ok(vec![prog])
+    }
+
+    /// Searches BBC iPlayer by using the A-to-Z programme listing API.
+    ///
+    /// The iBL `/search` endpoint has been retired; this implementation fetches all
+    /// programmes starting with the same letter as the query and filters by title
+    /// substring match.  For multi-word queries every word must appear in the title
+    /// (case-insensitive).  If the query is a PID or iPlayer URL it is resolved
+    /// directly without touching the A-to-Z listing.
+    pub async fn search_iplayer(
+        &self,
+        query: &str,
+    ) -> Result<Vec<Programme>, Box<dyn std::error::Error + Send + Sync>> {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // If the query looks like a PID or iPlayer URL, resolve it directly.
+        if let Some(pid) = Self::parse_pid(trimmed) {
+            return self.get_programme_or_series(&pid).await;
+        }
+
+        self.search_iplayer_atoz(trimmed).await
+    }
+
+    /// Implements iPlayer search via the A-to-Z programme listing endpoint.
+    ///
+    /// Fetches every page for the first letter of the query and returns all
+    /// programmes whose title contains every word in the query.  Matching is
+    /// done against a normalised (all punctuation stripped) representation of
+    /// the title so that queries like `"bills included"` match titles like
+    /// `"Bill's Included"`.
+    pub async fn search_iplayer_atoz(
+        &self,
+        query: &str,
+    ) -> Result<Vec<Programme>, Box<dyn std::error::Error + Send + Sync>> {
+        let query_lower = query.to_lowercase();
+        // Split into words, stripping punctuation.  "bill's" → ["bill", "s"]
+        // but we also need "bills" (no apostrophe) to match "Bill's".  We
+        // therefore match each query word against the punctuation-free title
+        // string (not word-by-word) so "bills" finds the substring "bills"
+        // inside the normalised title "bills included".
+        let words: Vec<String> = query_lower
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .map(|w| w.to_string())
+            .collect();
+
+        if words.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Derive the A-to-Z letter from the first alphabetic character.
+        let letter = query_lower
+            .chars()
+            .find(|c| c.is_ascii_alphabetic())
+            .unwrap_or('a');
+
+        let per_page = 200u32;
+        let mut page = 1u32;
+        let mut matched_pids: Vec<(String, String)> = Vec::new(); // (pid, tleo_type)
+
+        loop {
+            let url = format!(
+                "{}/atoz/{}/programmes?rights=mobile&availability=available&per_page={}&page={}",
+                self.ibl_base, letter, per_page, page
+            );
+            let resp = self.client.get(&url).send().await?;
+            if !resp.status().is_success() {
+                return Err(std::io::Error::other(format!(
+                    "BBC iBL A-to-Z API returned HTTP {}",
+                    resp.status()
+                ))
+                .into());
+            }
+            let json: Value = resp.json().await?;
+            let atoz = json
+                .get("atoz_programmes")
+                .ok_or("missing atoz_programmes")?;
+            let count = atoz.get("count").and_then(Value::as_u64).unwrap_or(0) as u32;
+            let elements = atoz
+                .get("elements")
+                .and_then(Value::as_array)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
+
+            for elem in elements {
+                let title = elem.get("title").and_then(Value::as_str).unwrap_or("");
+                // Normalise: lowercase and remove all non-alphanumeric characters.
+                // "Bill's Included" → "billsincluded"
+                let norm_title: String = title
+                    .to_lowercase()
+                    .chars()
+                    .filter(|c| c.is_alphanumeric())
+                    .collect();
+                // Every query word must appear as a contiguous substring of the
+                // normalised title.  "bills" matches "billsincluded". ✓
+                let matches = words.iter().all(|qw| norm_title.contains(qw.as_str()));
+                if matches {
+                    if let Some(pid) = elem.get("id").and_then(Value::as_str) {
+                        let tleo_type = elem
+                            .get("tleo_type")
+                            .and_then(Value::as_str)
+                            .unwrap_or("episode")
+                            .to_string();
+                        matched_pids.push((pid.to_string(), tleo_type));
+                    }
+                }
+            }
+
+            let fetched_so_far = (page - 1) * per_page + elements.len() as u32;
+            if fetched_so_far >= count || elements.is_empty() {
+                break;
+            }
+            page += 1;
+        }
+
+        // Resolve each matched PID into episodes
+        let default_seed = Programme {
+            prog_type: ProgrammeType::Tv,
+            channel: "BBC iPlayer".to_string(),
+            ..Default::default()
+        };
+        let mut discovered: HashMap<String, Programme> = HashMap::new();
+        for (pid, tleo_type) in matched_pids {
+            match tleo_type.as_str() {
+                "brand" | "series" => {
+                    if let Ok(eps) = self.fetch_ibl_programme_episodes(&pid).await {
+                        for ep in eps {
+                            if let Some(prog) = programme_from_ibl_episode(&ep, &default_seed) {
+                                discovered.insert(prog.pid.clone(), prog);
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    if let Ok(progs) = self.get_programme_or_series(&pid).await {
+                        for prog in progs {
+                            discovered.insert(prog.pid.clone(), prog);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut results: Vec<Programme> = discovered.into_values().collect();
+        results.sort_by(|a, b| {
+            a.name
+                .cmp(&b.name)
+                .then_with(|| a.seriesnum.cmp(&b.seriesnum))
+                .then_with(|| a.episodenum.cmp(&b.episodenum))
+                .then_with(|| a.episode.cmp(&b.episode))
+        });
+        Ok(results)
+    }
+
+    /// Parses iBL search response into a deduplicated list of available programmes.
+    pub async fn parse_ibl_search_results(
+        json: &Value,
+        api: &BbcApi,
+    ) -> Result<Vec<Programme>, Box<dyn std::error::Error + Send + Sync>> {
+        let elements = json
+            .get("search")
+            .and_then(|s| s.get("results").or_else(|| s.get("elements")))
+            .or_else(|| {
+                json.get("search_results")
+                    .and_then(|s| s.get("elements").or_else(|| s.get("results")))
+            })
+            .or_else(|| json.get("elements"))
+            .or_else(|| json.get("results"))
+            .and_then(Value::as_array);
+
+        let Some(items) = elements else {
+            return Ok(Vec::new());
+        };
+
+        let default_seed = Programme {
+            prog_type: ProgrammeType::Tv,
+            channel: "BBC iPlayer".to_string(),
+            ..Default::default()
+        };
+
+        let mut discovered = HashMap::<String, Programme>::new();
+        for item in items {
+            let pid = item
+                .get("id")
+                .or_else(|| item.get("pid"))
+                .and_then(Value::as_str);
+            let item_type = item.get("type").and_then(Value::as_str).unwrap_or("");
+
+            if item_type == "programme" || item_type == "brand" {
+                if let Some(brand_pid) = pid {
+                    if let Ok(brand_episodes) = api.fetch_ibl_programme_episodes(brand_pid).await {
+                        for ep in brand_episodes {
+                            if let Some(prog) = programme_from_ibl_episode(&ep, &default_seed) {
+                                discovered.insert(prog.pid.clone(), prog);
+                            }
+                        }
+                    }
+                }
+            } else if let Some(prog) = programme_from_ibl_episode(item, &default_seed) {
+                let ep_pid = prog.pid.clone();
+                if let Ok(archive) = api.get_series_archive(&prog).await {
+                    for arch_ep in archive {
+                        discovered.insert(arch_ep.pid.clone(), arch_ep);
+                    }
+                } else {
+                    discovered.insert(ep_pid, prog);
+                }
+            } else if let Some(ep_pid) = pid {
+                if let Ok(archive) = api.get_programme_or_series(ep_pid).await {
+                    for arch_ep in archive {
+                        discovered.insert(arch_ep.pid.clone(), arch_ep);
+                    }
+                }
+            }
+        }
+
+        let mut results: Vec<Programme> = discovered.into_values().collect();
+        results.sort_by(|a, b| {
+            a.name
+                .cmp(&b.name)
+                .then_with(|| a.seriesnum.cmp(&b.seriesnum))
+                .then_with(|| a.episodenum.cmp(&b.episodenum))
+                .then_with(|| a.episode.cmp(&b.episode))
+        });
+
+        Ok(results)
     }
 
     fn populate_from_playlist_json(&self, prog: &mut Programme, json: &Value) {
@@ -450,7 +734,7 @@ fn parse_ibl_episode_page(response: &Value, seed: &Programme) -> (usize, usize, 
     (count, page_size, programmes)
 }
 
-fn programme_from_ibl_episode(episode: &Value, seed: &Programme) -> Option<Programme> {
+pub fn programme_from_ibl_episode(episode: &Value, seed: &Programme) -> Option<Programme> {
     let pid = episode.get("id")?.as_str()?.to_string();
     let subtitle = episode
         .get("subtitle")
@@ -735,5 +1019,97 @@ mod ibl_tests {
         assert!(!has_next_ibl_page(2, 113, 100));
         assert!(!has_next_ibl_page(1, 0, 100));
         assert!(has_next_ibl_page(1, 2, 0));
+    }
+
+    #[test]
+    fn parses_various_pid_and_url_formats() {
+        assert_eq!(BbcApi::parse_pid("p015pksy"), Some("p015pksy".to_string()));
+        assert_eq!(
+            BbcApi::parse_pid("pid:m002wxyz"),
+            Some("m002wxyz".to_string())
+        );
+        assert_eq!(
+            BbcApi::parse_pid("PID: b003wxyz"),
+            Some("b003wxyz".to_string())
+        );
+        assert_eq!(
+            BbcApi::parse_pid("https://www.bbc.co.uk/iplayer/episodes/m0026b42/bills-included"),
+            Some("m0026b42".to_string())
+        );
+        assert_eq!(
+            BbcApi::parse_pid(
+                "https://www.bbc.co.uk/iplayer/episode/m0026b45/bills-included-series-1-episode-1"
+            ),
+            Some("m0026b45".to_string())
+        );
+        assert_eq!(
+            BbcApi::parse_pid("bbc.co.uk/iplayer/episodes/m0026b42/bills-included"),
+            Some("m0026b42".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn parses_ibl_search_response_with_episodes() {
+        let api = BbcApi::new();
+        let search_json = json!({
+            "search": {
+                "results": [
+                    {
+                        "type": "episode",
+                        "id": "p001ep01",
+                        "title": "Bill's Included",
+                        "subtitle": "Series 1: Episode 1",
+                        "slice_subtitle": "Episode 1",
+                        "synopses": { "small": "Bill takes in students." },
+                        "master_brand": { "titles": { "medium": "BBC One" } },
+                        "versions": []
+                    }
+                ]
+            }
+        });
+
+        let results = BbcApi::parse_ibl_search_results(&search_json, &api)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].pid, "p001ep01");
+        assert_eq!(results[0].name, "Bill's Included");
+    }
+
+    /// Verifies that the A-to-Z word-matching logic correctly filters programme
+    /// titles.  This test exercises the normalisation (strip punctuation) and
+    /// substring matching used inside `search_iplayer_atoz`.
+    #[test]
+    fn atoz_title_word_matching() {
+        // Helper: reproduce the matching logic from search_iplayer_atoz
+        fn matches_query(query: &str, title: &str) -> bool {
+            let query_lower = query.to_lowercase();
+            let words: Vec<String> = query_lower
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|w: &&str| !w.is_empty())
+                .map(|w| w.to_string())
+                .collect();
+            let norm_title: String = title
+                .to_lowercase()
+                .chars()
+                .filter(|c| c.is_alphanumeric())
+                .collect();
+            words.iter().all(|qw| norm_title.contains(qw.as_str()))
+        }
+
+        // Exact match (apostrophe stripped)
+        assert!(matches_query("Bill's Included", "Bill's Included"));
+        // Query without apostrophe matches title with apostrophe
+        assert!(matches_query("bills included", "Bill's Included"));
+        // Partial word prefix
+        assert!(matches_query("bills incl", "Bill's Included"));
+        // Both words must match
+        assert!(!matches_query("Bill's Excluded", "Bill's Included"));
+        // Single word
+        assert!(matches_query("bills", "Bill's Included"));
+        // Case-insensitive
+        assert!(matches_query("BILL'S INCLUDED", "Bill's Included"));
+        // Unrelated title
+        assert!(!matches_query("Blue Planet", "Bill's Included"));
     }
 }
