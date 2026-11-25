@@ -4,7 +4,11 @@ Changes are grouped by application because the CLI and GUI use independent versi
 
 ## CLI
 
-### Unreleased (1.1.1)
+### Unreleased
+
+- Update `cookie` dependency to 0.18.3 to address security advisory RUSTSEC-2026-0594.
+
+### 1.1.1
 
 - Add live BBC iPlayer API search and programme/series resolution in `BbcApi` without requiring web scraping.
 - Replace retired iBL `/search` endpoint with A-to-Z programme listing search (`/atoz/{letter}/programmes`); search now matches all programmes whose title contains the query words, handling punctuation differences such as `"bill's"` → `"bills"`.
@@ -41,7 +45,7 @@ Changes are grouped by application because the CLI and GUI use independent versi
 
 ## GUI
 
-### Unreleased (1.1.1)
+### 1.1.1
 
 - Parallel downloads: up to N episodes download simultaneously (default 2, configurable 1–3 in Settings) using a tokio semaphore; queued items show ⏳ Queued until a slot is free.
 - Add "Max parallel downloads" control (range 1–3) in the Settings tab, persisted across restarts in the shared profile options file.
